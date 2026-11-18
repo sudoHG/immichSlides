@@ -63,14 +63,42 @@ def unique_object(pairs):
     return value
 
 
-def validate_manifest(manifest, planned, methods=None, inventory=None):
-    """Fail closed on population, execution metadata and compiled-selector drift."""
-    if (not isinstance(manifest, dict) or set(manifest) != {"schema_version", "flows"}
+FLOW_CONFIGURATIONS = {
+    'iphone-album-selection': 'Debug',
+    'iphone-background-return': 'Release',
+    'iphone-connection-error': 'Debug',
+    'iphone-first-boot': 'Debug',
+    'iphone-person-return': 'Debug',
+    'iphone-pin-gate': 'Debug',
+    'iphone-playback-controls': 'Debug',
+    'iphone-settings-relaunch': 'Release',
+    'ipad-background-return': 'Release',
+    'ipad-first-boot': 'Debug',
+    'ipad-playback-controls': 'Debug',
+    'ipad-rotation': 'Debug',
+    'ipad-settings-sidebar': 'Debug',
+    'tv-album-selection': 'Debug',
+    'tv-background-return': 'Release',
+    'tv-directional-wake': 'Debug',
+    'tv-first-boot': 'Debug',
+    'tv-pause-resume': 'Release',
+    'tv-person-selection': 'Debug',
+    'tv-pin-gate': 'Debug',
+    'tv-playback-controls': 'Debug',
+    'tv-server-switch': 'Release',
+    'tv-settings-relaunch': 'Release',
+}
+
+
+def validate_manifest(manifest, methods=None):
+    """Validate the complete approved execution population without historical anchors."""
+    if (not isinstance(manifest, dict) or set(manifest) != {"schema_version", "core_flow_ids", "flows"}
             or type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1
-            or not isinstance(manifest["flows"], list)):
-        raise ValueError("smoke-manifest-shape: expected schema_version 1 and flows array")
-    expected = {flow["id"]: flow for flow in planned}
-    errors, seen = [], set()
+            or not isinstance(manifest["flows"], list)
+            or manifest["core_flow_ids"] != sorted(CORE_FLOW_IDS)):
+        raise ValueError("smoke-manifest-shape: expected version 1, approved core IDs and flows")
+    seen = set()
+    errors = []
     for flow in manifest["flows"]:
         if (not isinstance(flow, dict)
                 or set(flow) != {"id", "platform", "device", "configuration", "fixtures", "selector"}
@@ -81,54 +109,42 @@ def validate_manifest(manifest, planned, methods=None, inventory=None):
         if key in seen:
             errors.append(f"smoke-manifest-population: duplicate {key}")
         seen.add(key)
-        source = expected.get(key)
-        if source is None:
+        if key not in FLOW_CONFIGURATIONS:
             errors.append(f"smoke-manifest-population: unknown {key}")
             continue
-        platform = "tvos" if source["device"] == "tv" else "ios"
-        fixtures = [source["fixture"]] + ([source["peer_fixture"]] if "peer_fixture" in source else [])
-        for field, value in (("device", source["device"]), ("platform", platform),
-                             ("configuration", source["configuration"]), ("fixtures", fixtures)):
+        device, _, purpose = key.partition("-")
+        platform = "tvos" if device == "tv" else "ios"
+        expected = {"device": device, "platform": platform, "configuration": FLOW_CONFIGURATIONS[key],
+                    "fixtures": ["a", "b"] if key == "tv-server-switch" else ["a"]}
+        for field, value in expected.items():
             if flow[field] != value:
                 errors.append(f"smoke-manifest-mapping: {key} {field} must be {value!r}")
-        selector = flow["selector"]
-        expected_selector = ("SmokeFlowTVOSUITests" if platform == "tvos" else "SmokeFlowIOSUITests")
-        expected_selector += "/" + FLOW_METHODS.get(key.partition("-")[2], "<unknown>")
-        if selector != expected_selector:
-            errors.append(f"smoke-manifest-binding: {key} must select {expected_selector}")
-        if (not isinstance(selector, str) or len(selector.split("/")) != 2
-                or methods is not None and platform not in methods.get(selector, set())):
+        selector = ("SmokeFlowTVOSUITests" if platform == "tvos" else "SmokeFlowIOSUITests") + "/" + FLOW_METHODS[purpose]
+        if flow["selector"] != selector:
+            errors.append(f"smoke-manifest-binding: {key} must select {selector}")
+        if methods is not None and platform not in methods.get(selector, set()):
             errors.append(f"smoke-manifest-selector: {key} {selector!r} is not compiled for {platform}")
-        if inventory is not None:
-            rows = [row for row in inventory if row.get("kind") == "ui" and row.get("identifier") == selector]
-            if len(rows) != 1 or rows[0].get("target_home") != "smoke" or key not in rows[0].get("smoke_flows", []):
-                errors.append(f"smoke-manifest-inventory: {key} requires one matching smoke UI row")
-    if inventory is not None:
-        for row in inventory:
-            selector = row.get("identifier", "")
-            if selector.partition("/")[0] not in {"SmokeFlowIOSUITests", "SmokeFlowTVOSUITests"}:
-                continue
-            mapped = [flow["id"] for flow in manifest["flows"] if flow.get("selector") == selector]
-            if (not mapped or row.get("kind") != "ui" or row.get("target_home") != "smoke"
-                    or sorted(row.get("smoke_flows", [])) != sorted(mapped)):
-                errors.append(f"smoke-manifest-inventory: {selector} reverse mapping differs")
-    for key in sorted(expected.keys() - seen):
-        errors.append(f"smoke-manifest-population: missing {key}")
+    errors.extend(f"smoke-manifest-population: missing {key}" for key in sorted(FLOW_CONFIGURATIONS.keys() - seen))
     if errors:
         raise ValueError("\n".join(errors))
     return manifest["flows"]
 
 
 def validate_exclusions(flows, methods, plans):
-    """Evaluate actual plan populations, including class and method selections."""
-    from ci_ui_shards import default_plan_population
+    """Keep smoke out of ordinary plans, including explicit class/method selections."""
     for platform in ("ios", "tvos"):
-        population = [{"key": selector} for selector, platforms in methods.items() if platform in platforms]
         smoke = {flow["selector"] for flow in flows if flow["platform"] == platform}
         for name, plan in plans[platform].items():
-            leaked = smoke & {entry["key"] for entry in default_plan_population(population, plan)}
-            if leaked:
-                raise ValueError(f"smoke-manifest-exclusion: {name} includes {sorted(leaked)!r}")
+            for target in plan.get("testTargets", []):
+                if target.get("target", {}).get("name") != "immichSlidesUITests" or target.get("skipped") is True:
+                    continue
+                selected, skipped = target.get("selectedTests"), target.get("skippedTests", [])
+                def includes(selector, entries):
+                    return any(entry.removesuffix("()") in {selector, selector.partition("/")[0]} for entry in entries)
+                leaked = [selector for selector in smoke if (selected is None or includes(selector, selected))
+                          and not includes(selector, skipped)]
+                if leaked:
+                    raise ValueError(f"smoke-manifest-exclusion: {name} includes {sorted(leaked)!r}")
 
 
 def validate_group_evidence(evidence, flows, device, configuration, *, expected_source_sha):
@@ -171,14 +187,13 @@ def validate_group_evidence(evidence, flows, device, configuration, *, expected_
 def load_manifest(root):
     from ui_test_inventory import parse_ui_tests
     manifest = json.loads((root / MANIFEST).read_text(), object_pairs_hook=unique_object)
-    planned = json.loads((root / "scripts/ci-test-tiers.json").read_text(), object_pairs_hook=unique_object)["smoke_flows"]
     _, classes, errors, _ = parse_ui_tests({path.relative_to(root).as_posix(): path.read_text()
                                           for path in (root / "immichSlidesUITests").rglob("*.swift")})
     if errors:
         raise ValueError("smoke-manifest-selector: " + "; ".join(errors))
     methods = {f"{name}/{method}": platforms for name, entries in classes.items()
                for method, platforms in entries.items()}
-    return manifest, planned, methods
+    return manifest, methods
 
 
 def write_json(path, payload):
@@ -311,9 +326,6 @@ def run(arguments, root, runner, stdout, stderr):
     if (not arguments.smoke_device or not arguments.configuration
             or (arguments.platform == "tvos") != (arguments.smoke_device == "tv")):
         raise runner.CommandError("smoke-flow requires a matching --smoke-device and explicit --configuration")
-    if (arguments.listed_retry_device or arguments.nightly_retry_method or arguments.nightly_retry_source
-            or arguments.scenario != "normal" or arguments.fixture_set != "a"):
-        raise runner.CommandError("smoke-flow accepts no retry, scenario or fixture overrides")
     archive_mode = getattr(arguments, "smoke_archive", False)
     control_path = getattr(arguments, "smoke_control_path", None)
     if archive_mode and (not arguments.test_without_building or arguments.warm_up_only
@@ -321,8 +333,8 @@ def run(arguments, root, runner, stdout, stderr):
         raise runner.CommandError("smoke archive requires explicit iOS test-without-building, relocated products and expected control")
     if control_path is not None and not archive_mode:
         raise runner.CommandError("expected smoke control requires --smoke-archive")
-    manifest, planned, methods = load_manifest(root)
-    flows = validate_manifest(manifest, planned)
+    manifest, methods = load_manifest(root)
+    flows = validate_manifest(manifest, methods)
     flows = select_scope(flows, getattr(arguments, "smoke_scope", "full"))
     selected = select_flows(flows, arguments.smoke_device, arguments.configuration, arguments.smoke_flow)
     for flow in selected:
@@ -332,7 +344,7 @@ def run(arguments, root, runner, stdout, stderr):
     udid = runner.destination_udid(arguments.destination)
     if "Simulator" not in arguments.destination:
         raise runner.CommandError("smoke-flow only accepts Simulator destinations")
-    from ci_flaky import simulator_device_class
+    from ci_simulator import simulator_device_class
     simulator_device_class(udid, arguments.smoke_device)
     runner.prepare_evidence_directory(arguments.evidence_dir)
     evidence = arguments.evidence_dir.resolve()

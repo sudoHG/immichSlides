@@ -14,20 +14,6 @@ import yaml
 
 
 PRIVACY_WORKFLOW = ".github/workflows/privacy-preflight.yml"
-PROBE_WORKFLOW = ".github/workflows/ci-probe.yml"
-REPORT_WORKFLOW = ".github/workflows/ci-report.yml"
-XCC_IMPORT_WORKFLOW = ".github/workflows/ci-xcode-cloud-import.yml"
-XCC_ROUTE_WORKFLOW = ".github/workflows/ci-xcode-cloud-route.yml"
-XCC_DISPATCH_WORKFLOW = ".github/workflows/ci-xcode-cloud-dispatch.yml"
-XCC_WORKFLOWS = {XCC_IMPORT_WORKFLOW, XCC_ROUTE_WORKFLOW}
-XCC_DISPATCH_GUARD = ("github.ref == 'refs/heads/main' && "
-                      "github.event.workflow_run.head_repository.full_name == github.repository")
-XCC_BINDINGS = {"CI_WORKFLOW_TOKEN": "${{ github.token }}",
-                "ASC_ISSUER_ID": "${{ secrets.ASC_ISSUER_ID }}",
-                "ASC_KEY_ID": "${{ secrets.ASC_KEY_ID }}",
-                "ASC_PRIVATE_KEY": "${{ secrets.ASC_PRIVATE_KEY }}"}
-XCC_CONTROL_BINDINGS = {**XCC_BINDINGS, "CI_XCC_ROUTING_OVERRIDE": "${{ vars.CI_XCC_ROUTING_OVERRIDE }}"}
-LIVE_WORKFLOW = ".github/workflows/ci-nightly.yml"
 SHADOW_WORKFLOW = ".github/workflows/ci-smoke-shadow.yml"
 SHADOW_PLAN_GUARD = ("github.ref == 'refs/heads/main' && "
     "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')")
@@ -47,30 +33,7 @@ SHADOW_STAGE = "/usr/bin/python3 -B scripts/ci_smoke_shadow.py stage"
 SHADOW_STAGED_SETUP = '/usr/bin/python3 -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" setup'
 SHADOW_COMMAND = '"$RUNNER_TEMP/smoke-python/bin/python3" -B scripts/ci_smoke_shadow.py '
 SHADOW_GROUP_COMMAND = '"$RUNNER_TEMP/smoke-python/bin/python3" -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" '
-NIGHTLY_UNGATED_JOBS = {"change", "live-environment-refusal"}
-NIGHTLY_CHANGE_GATE = ("!(github.event_name == 'schedule' && needs.change.result == 'success' "
-                       "&& needs.change.outputs.run_nightly == 'false')")
-LIVE_UNIT_NEEDS = ["change", "live-admission", "live-build"]
-LIVE_UNIT_CONDITION = ("${{ !cancelled() && " + NIGHTLY_CHANGE_GATE + " && needs.live-admission.result == 'success' "
-                       "&& needs.live-build.result == 'success' && needs.live-admission.outputs.admitted == 'true' }}")
-NIGHTLY_CHANGE_OUTPUT = "${{ steps.verdict.outputs.run_nightly }}"
-LIVE_ENVIRONMENT = "immich-test-server"
-LIVE_BINDINGS = {"CI_LIVE_URL": "${{ secrets.IMMICH_TEST_SERVER_URL }}",
-                 "CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}
-ISSUE_WRITE_WORKFLOWS = {PROBE_WORKFLOW, ".github/workflows/ci-report.yml"}
-PROBE_COMMANDS = {
-    '/usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"',
-    "/usr/bin/python3 scripts/probe_ci_toolchain.py",
-}
-PROBE_ENVIRONMENT = {
-    "CI_PROBE_TOKEN": "${{ github.token }}",
-    "CI_PROBE_SIMULATE_MISSING_PIN": "${{ inputs.simulate_missing_pin || false }}",
-}
-WORKFLOW_RUN_SOURCES = {
-    XCC_DISPATCH_WORKFLOW: {"ci-ui", "ci-xcode-cloud-route"},
-    ".github/workflows/ci-publish.yml": {"ci-gate"},
-    REPORT_WORKFLOW: {"ci-nightly", "ci-gate", "ci-ui"},
-}
+WORKFLOW_RUN_SOURCES = {}
 # Main pushes share one first-attempt queue (superseding only pending runs); pull requests cancel
 # within their own PR; reruns and nightly runs get a group of their own and are never cancelled.
 CANCEL_PULL_REQUESTS_ONLY = "${{ github.event_name == 'pull_request' }}"
@@ -79,24 +42,9 @@ CONCURRENCY_WORKFLOWS = {
         "group": "ci-gate-${{ github.event_name }}-${{ github.event.pull_request.number || "
                  "(github.event_name == 'push' && github.run_attempt == 1 && 'main') || github.run_id }}",
         "cancel-in-progress": CANCEL_PULL_REQUESTS_ONLY},
-    ".github/workflows/ci-ui.yml": {
-        "group": "ci-ui-${{ github.event_name }}-${{ github.event.pull_request.number || "
-                 "(github.event_name == 'push' && github.run_attempt == 1 && 'main') || github.run_id }}",
-        "cancel-in-progress": CANCEL_PULL_REQUESTS_ONLY},
-    LIVE_WORKFLOW: {
-        "group": "ci-nightly-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}",
-        "cancel-in-progress": CANCEL_PULL_REQUESTS_ONLY},
 }
-ENVIRONMENT_WORKFLOWS = {
-    "xcode-cloud": XCC_WORKFLOWS,
-    "ci-publisher": {".github/workflows/ci-publish.yml", ".github/workflows/ci-approval.yml",
-                     ".github/workflows/ci-approve.yml"},
-    "ci-approval": {".github/workflows/ci-approval.yml"},
-    "release": {".github/workflows/ci-release.yml"},
-}
-TRUSTED_WORKFLOWS = {PRIVACY_WORKFLOW, SHADOW_WORKFLOW, ".github/workflows/ci-probe.yml"} | set(WORKFLOW_RUN_SOURCES)
-for allowed in ENVIRONMENT_WORKFLOWS.values():
-    TRUSTED_WORKFLOWS.update(allowed)
+
+TRUSTED_WORKFLOWS = {PRIVACY_WORKFLOW, SHADOW_WORKFLOW}
 
 # New trusted interfaces require an explicit policy change and review.
 TRUSTED_REMOTE_ACTION_INPUTS = {
@@ -105,18 +53,6 @@ TRUSTED_REMOTE_ACTION_INPUTS = {
                                   "artifact-ids", "merge-multiple"},
 }
 TRUSTED_READ_ONLY_COMMANDS = {("pwd",), ("git", "rev-parse", "HEAD")}
-PUBLISHER_COMMANDS = {
-    ".github/workflows/ci-publish.yml": {"route", "admit", "reevaluate", "publish"},
-    ".github/workflows/ci-approval.yml": {"approve"},
-    ".github/workflows/ci-approve.yml": {"fallback"},
-}
-PUBLISHER_BINDINGS = {
-    "CI_WORKFLOW_TOKEN": "${{ github.token }}",
-    "CI_APP_ID": "${{ vars.CI_APP_ID }}",
-    "CI_APP_PRIVATE_KEY": "${{ secrets.CI_APP_PRIVATE_KEY }}",
-    "CI_PR_NUMBER": "${{ needs.route.outputs.pr }}",
-    "CI_PUSHED_SHA": "${{ needs.route.outputs.pushed }}",
-}
 TRUSTED_PYTHON_COMMANDS = {
     ("/usr/bin/python3", "scripts/check_workflow_policy.py"),
     ("/usr/bin/python3", "scripts/check_workflow_policy.py", "--root", "."),
@@ -212,10 +148,6 @@ def string_scalars(value, location='workflow'):
 STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
 EXPRESSION = re.compile(r"\$\{\{((?:" + STRING_LITERAL.pattern + r"|[^']|')*?)(?:\}\}|\Z)")
 SECRETS_ROOT = r"(?<![\w-])secrets(?![\w-])"
-LIVE_SECRET_REFERENCE = SECRETS_ROOT + r"\s*(?:\.\s*IMMICH_TEST_SERVER_|\[\s*'IMMICH_TEST_SERVER_)"
-WORKFLOW_RUN_NAME_REFERENCE = (r"(?<![\w.-])github\s*(?:\.\s*event|\[\s*'event'\s*\])\s*"
-                               r"(?:\.\s*workflow_run|\[\s*'workflow_run'\s*\])\s*"
-                               r"(?:\.\s*name\b|\[\s*'name'\s*\])")
 
 
 def implicit_expression_locations(jobs):
@@ -261,33 +193,6 @@ def trusted_run_allowed(script, path, events):
         return script in {SHADOW_SETUP, SHADOW_STAGE, SHADOW_STAGED_SETUP, SHADOW_COMMAND + "plan", SHADOW_COMMAND + "plan-shared",
                           SHADOW_COMMAND + "aggregate", SHADOW_GROUP_COMMAND + "build", SHADOW_GROUP_COMMAND + "producer-record",
                           SHADOW_GROUP_COMMAND + "select-archive", SHADOW_GROUP_COMMAND + "run", SHADOW_GROUP_COMMAND + "cleanup"}
-    if path == XCC_DISPATCH_WORKFLOW and set(events) == {"workflow_run"}:
-        if script in {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_dispatch.py',
-                      '/usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"'}:
-            return True
-    if path in XCC_WORKFLOWS and set(events) == {"workflow_dispatch"}:
-        role = "import" if path == XCC_IMPORT_WORKFLOW else "route"
-        entries = ({'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_import.py'} if role == "import" else
-                   {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_route.py ' + phase for phase in ("prepare", "arm", "start", "poll")}
-                   | {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_dispatch.py import'})
-        if script in entries | {'/usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"'}:
-            return True
-    if path == REPORT_WORKFLOW and set(events) <= {"schedule", "workflow_dispatch", "workflow_run"}:
-        if script in {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase collect',
-                      '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase sync',
-                      '/usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"'}:
-            return True
-    if path in PUBLISHER_COMMANDS:
-        commands = {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py ' + command
-                    for command in PUBLISHER_COMMANDS[path]}
-        commands.add('/usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"')
-        if path == ".github/workflows/ci-approval.yml":
-            commands.add("/usr/bin/true")
-        if script in commands:
-            return True
-    if path == PROBE_WORKFLOW and set(events) <= {"schedule", "workflow_dispatch"} and events:
-        if script in PROBE_COMMANDS:
-            return True
     if path == PRIVACY_WORKFLOW and set(events) == {"pull_request_target"}:
         if script in {PRIVACY_OBJECT_FETCH, "scripts/run_trusted_privacy_preflight.sh"}:
             return True
@@ -317,143 +222,6 @@ def trusted_action_allowed(uses, options):
                         {"artifact", "artifacts", "ci-artifacts", "download", "downloads"} for part in parts))
     allowed_inputs = TRUSTED_REMOTE_ACTION_INPUTS.get(uses.split("@")[0].lower())
     return allowed_inputs is not None and set(options) <= allowed_inputs
-
-
-def verified_archive_transfer(job, *, nightly, group):
-    """Require two same-provenance transfers, each followed by an unavoidable integrity gate."""
-    steps = job.get("steps", [])
-    if (not isinstance(steps, list) or any(not isinstance(step, dict)
-            or not isinstance(step.get("run", ""), str) or not isinstance(step.get("with", {}), dict) for step in steps)):
-        return False
-    ids = ("staging", "download", "verify_download", "redownload", "verify_redownload")
-    selected = [[(index, step) for index, step in enumerate(steps) if step.get("id") == name] for name in ids]
-    if any(len(matches) != 1 for matches in selected):
-        return False
-    positions = [matches[0][0] for matches in selected]
-    staging, download, first, retry, final = [matches[0][1] for matches in selected]
-    runners = [(index, step) for index, step in enumerate(steps) if "ci_ui_tests.py run " in step.get("run", "")]
-    if (positions != sorted(positions) or len(runners) != 1 or runners[0][0] <= positions[-1]
-            or runners[0][1].get("if") or runners[0][1].get("continue-on-error", False)):
-        return False
-    if nightly:
-        artifact = "${{ matrix.device == 'appletv' && needs.ui-archive.outputs.tvos_artifact_id || needs.ui-archive.outputs.ios_artifact_id }}"
-        run = "${{ matrix.device == 'appletv' && needs.ui-archive.outputs.tvos_producer_run_id || needs.ui-archive.outputs.ios_producer_run_id }}"
-    else:
-        artifact = "${{ needs." + group + "-wait.outputs.artifact_id }}"
-        run = "${{ needs." + group + "-wait.outputs.producer_run_id }}"
-    options = {"artifact-ids": artifact, "path": "${{ steps.staging.outputs.staging_path }}", "merge-multiple": True,
-               "github-token": "${{ github.token }}", "repository": "${{ github.repository }}", "run-id": run}
-    retry_condition = "${{ !cancelled() && steps.verify_download.outputs.retry_required == 'true' }}"
-    if (download.get("with") != options or retry.get("with") != {**options, "path": "${{ steps.verify_download.outputs.staging_path }}"}
-            or not str(download.get("uses", "")).startswith("actions/download-artifact@")
-            or retry.get("uses") != download.get("uses") or download.get("if") or retry.get("if") != retry_condition
-            or download.get("continue-on-error") is not True or retry.get("continue-on-error") is not True
-            or sum("artifact-ids" in step.get("with", {}) for step in steps) != 2):
-        return False
-    stage_command = '''"$PYTHON" -B scripts/ci_ui_tests.py stage-download --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' '''
-    def tokens(command):
-        try:
-            return shlex.split(command.replace("\\\n", " "))
-        except (ValueError, AttributeError):
-            return None
-    if (staging.get("if") or staging.get("continue-on-error", False) or staging.get("working-directory") != "ui-source"
-            or tokens(staging.get("run", "")) != tokens(stage_command)):
-        return False
-    for step, name, condition, flag in ((first, "download", "${{ !cancelled() && steps.staging.outcome == 'success' }}", "--prepare-redownload"),
-                                         (final, "redownload", retry_condition, '--previous-receipt-path "$RUNNER_TEMP/ui-download.json"')):
-        stage = "staging" if name == "download" else "verify_download"
-        environment = {"ARCHIVE_STAGING": "${{ steps." + stage + ".outputs.staging_path }}",
-            "ARCHIVE_TRANSFER_STARTED": "${{ steps.staging.outputs.transfer_started }}",
-            "ARCHIVE_ACTION_OUTCOME": "${{ steps." + name + ".outcome }}", "ARCHIVE_ARTIFACT_ID": artifact,
-            "ARCHIVE_PLATFORM": "${{ matrix.device == 'appletv' && 'tvos' || 'ios' }}"}
-        command = '''"$PYTHON" -B scripts/ci_ui_tests.py gate-archive --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
-            --staging-dir "$ARCHIVE_STAGING" --archive-dir "$RUNNER_TEMP/ui-archive"
-            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$ARCHIVE_PLATFORM.json"
-            --artifact-id "$ARCHIVE_ARTIFACT_ID" --action-outcome "$ARCHIVE_ACTION_OUTCOME"
-            --transfer-started "$ARCHIVE_TRANSFER_STARTED" --download-receipt-path "$RUNNER_TEMP/ui-download.json"
-            --output-dir "$RUNNER_TEMP/ui-records" ''' + flag
-        if not nightly:
-            command += ' --destination "$UI_DESTINATION" --compiled-from-official-results'
-        if (step.get("env") != environment or step.get("if") != condition or step.get("continue-on-error", False)
-                or step.get("working-directory") != "ui-source" or tokens(step.get("run", "")) != tokens(command)):
-            return False
-    cleanup = [step for step in steps if step.get("name") == "Display summary and remove task-owned products"]
-    if len(cleanup) != 1:
-        return False
-    cleanup = cleanup[0]
-    targets = '"$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive" '
-    if nightly:
-        targets += '"$RUNNER_TEMP/ui-identity" '
-    targets += '${ARCHIVE_STAGING:+"$ARCHIVE_STAGING"} ${ARCHIVE_REDOWNLOAD_STAGING:+"$ARCHIVE_REDOWNLOAD_STAGING"}'
-    removals = [tokens(line.strip()) for line in cleanup.get("run", "").splitlines() if line.strip().startswith("rm -")]
-    if (cleanup.get("if") != "always()" or cleanup.get("env") != {
-            "ARCHIVE_STAGING": "${{ steps.staging.outputs.staging_path }}",
-            "ARCHIVE_REDOWNLOAD_STAGING": "${{ steps.verify_download.outputs.staging_path }}"}
-            or removals != [tokens("rm -rf " + targets), tokens('rm -f "$RUNNER_TEMP/ui-download.json"')]):
-        return False
-    return True
-
-
-def top_level_terms(condition, operator):
-    """Split at an operator outside quotes and parentheses; None when the text is malformed."""
-    terms, depth, quote, start, index = [], 0, None, 0, 0
-    while index < len(condition):
-        character = condition[index]
-        if quote:
-            quote = None if character == quote else quote
-        elif character in "'\"":
-            quote = character
-        elif character == "(":
-            depth += 1
-        elif character == ")":
-            depth -= 1
-            if depth < 0:
-                return None
-        elif depth == 0 and condition.startswith(operator, index):
-            terms.append(condition[start:index].strip())
-            start, index = index + len(operator), index + len(operator) - 1
-        index += 1
-    if depth or quote:
-        return None
-    return terms + [condition[start:].strip()]
-
-
-def condition_requires_gate(condition):
-    """The exact gate must be one conjunct of a pure `&&` chain, so `|| true` and negation cannot bypass it."""
-    text = " ".join(condition.split())
-    if text.startswith("${{") and text.endswith("}}"):
-        text = text[3:-2].strip()
-    alternatives = top_level_terms(text, "||")
-    terms = top_level_terms(text, "&&")
-    return alternatives == [text] and terms is not None and NIGHTLY_CHANGE_GATE in terms
-
-
-def change_verdict_follows_upload(steps):
-    """A skip verdict is exported only by a step that follows the record upload and cannot run after its failure."""
-    steps = steps if isinstance(steps, list) else []
-    uploads = [index for index, step in enumerate(steps) if isinstance(step, dict)
-               and str(step.get("uses", "")).startswith("actions/upload-artifact@")
-               and str(step.get("with", {}).get("name", "")).startswith("nightly-change-")
-               and step.get("with", {}).get("if-no-files-found") == "error"
-               and not re.search(r"\b(?:always|cancelled|failure)\(\)", str(step.get("if", "")))]
-    verdicts = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "verdict"]
-    return (len(uploads) == 1 and len(verdicts) == 1 and uploads[0] < verdicts[0]
-            and not re.search(r"\b(?:always|cancelled|failure)\(\)", str(steps[verdicts[0]].get("if", ""))))
-
-
-def nightly_job_gated(job_id, jobs, visited=frozenset()):
-    """Gated directly by the change check, or skipped with a gated job because its condition keeps the implicit success()."""
-    job = jobs.get(job_id)
-    if not isinstance(job, dict) or job_id in visited:
-        return False
-    needs = job.get("needs")
-    needs = [needs] if isinstance(needs, str) else needs if isinstance(needs, list) else []
-    condition = job.get("if") if isinstance(job.get("if"), str) else ""
-    if "change" in needs and condition_requires_gate(condition):
-        return True
-    if re.search(r"\b(?:always|cancelled|failure)\(\)", condition):
-        return False
-    return any(nightly_job_gated(name, jobs, visited | {job_id}) for name in needs if isinstance(name, str))
 
 
 def shadow_artifact_allowed(item):
@@ -639,7 +407,7 @@ def check_shadow_contract(document, events, flag):
         flag("workflow", "smoke-shadow-contract", "Smoke keeps main-only scheduled/manual admission, manifest groups, read-only authority and a 70-minute execution budget")
 
 
-def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflows=()) -> list[Violation]:
+def check_workflow(path: str, source: str, *, run_named_workflows=()) -> list[Violation]:
     violations = []
 
     def flag(location, rule, message):
@@ -684,316 +452,34 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
         check_shadow_contract(document, events, flag)
     if "permissions" in document and not explicit_permissions(document["permissions"]):
         flag("permissions", "permissions", "Use an explicit permission mapping, including {} for no grants")
-    if path == PROBE_WORKFLOW and (document.get("name") != "ci-probe"
-            or set(events) != {"schedule", "workflow_dispatch"}
-            or document.get("permissions") != {}):
-        flag("workflow", "probe-contract", "ci-probe needs its exact name, scheduled/manual triggers and no workflow-level grants")
-    approval_workflow = path in {".github/workflows/ci-approval.yml", ".github/workflows/ci-approve.yml"}
-    if path == REPORT_WORKFLOW and (document.get("name") != "ci-report"
-            or set(events) != {"schedule", "workflow_dispatch", "workflow_run"}
-            or not isinstance(events.get("workflow_run"), dict)
-            or events.get("workflow_run", {}).get("branches") != ["main"]
-            or events.get("workflow_dispatch") != {"inputs": {"reset_history": {
-                "description": "Maintainer-only explicit bootstrap or reset of reporting history",
-                "required": False, "default": False, "type": "boolean"}, "health_month": {
-                "description": "Optional UTC health month (YYYY-MM); scheduled collection reports the previous month on day 1",
-                "required": False, "default": "", "type": "string"}}}
-            or document.get("permissions") != {}):
-        flag("workflow", "report-contract", "ci-report needs main-filtered completion/daily/manual triggers and no workflow-level grants")
     if path in CONCURRENCY_WORKFLOWS and document.get("concurrency") != CONCURRENCY_WORKFLOWS[path]:
         flag("concurrency", "concurrency-queue", "Producer concurrency is fixed: main pushes supersede only pending main runs, "
              "reruns and nightly runs are never cancelled, and only pull requests cancel in progress")
-    if approval_workflow and "concurrency" in document:
-        flag("workflow", "approval-queue", "Approval records cannot enter a replaceable concurrency queue")
-    if path == XCC_IMPORT_WORKFLOW and (document.get("name") != "ci-xcode-cloud-import"
-            or document.get("run-name") != "xcc-import-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}-${{ inputs.group }}"
-            or set(events) != {"workflow_dispatch"} or document.get("permissions") != {}
-            or events["workflow_dispatch"] != {"inputs": {"producer_run_id": {
-                "description": "Authoritative same-repository pull-request ci-ui run", "required": True, "type": "string"},
-                "producer_attempt": {"description": "UI selection evidence attempt", "required": True, "type": "string"},
-                "group": {"description": "Trusted functional platform group", "required": True, "type": "choice", "options": ["ios", "tvos"]}}}):
-        flag("workflow", "xcc-contract", "Cloud import accepts only a literal main-only dispatch interface")
-    if path == XCC_ROUTE_WORKFLOW and (document.get("name") != "ci-xcode-cloud-route"
-            or document.get("run-name") != "xcc-route-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}-${{ inputs.group }}"
-            or set(events) != {"workflow_dispatch"} or document.get("permissions") != {}
-            or "concurrency" in document or set(jobs) != {"start", "route", "dispatch-import"}
-            or events["workflow_dispatch"] != {"inputs": {"producer_run_id": {
-                "description": "Authoritative same-repository pull-request ci-ui run", "required": True, "type": "string"},
-                "producer_attempt": {"description": "UI selection evidence attempt", "required": True, "type": "string"},
-                "group": {"description": "Trusted functional platform group", "required": True, "type": "choice", "options": ["ios", "tvos"]},
-                "mode": {"description": "Routing policy or bounded fallback diagnostic", "required": True, "default": "auto",
-                         "type": "choice", "options": ["auto", "github", "force-start-failure"]}}}):
-        flag("workflow", "xcc-contract", "Router needs its exact main-only interface and account budget serialization")
-    if path == XCC_DISPATCH_WORKFLOW and (document.get("name") != "ci-xcode-cloud-dispatch"
-            or events != {"workflow_run": {"workflows": ["ci-ui"], "types": ["requested"]}}
-            or document.get("permissions") != {} or document.get("env")):
-        flag("workflow", "xcc-contract", "Cloud event bridge has a fixed source interface and no inherited credentials")
-    # Live consumers intentionally execute test bundles; publisher-only trusted command rules do not apply.
-    # Their environment and test-time credentials instead have this separate admission contract.
-    allowed_secret_locations = {'workflow.jobs.live-unit.steps[' + str(index) + '].env.' + key
-        for index, step in enumerate(jobs.get('live-unit', {}).get('steps', []))
-        if step.get('id') == 'live' and step.get('env') == LIVE_BINDINGS for key in LIVE_BINDINGS}
-    live_job_locations = []
-    implicit_locations = implicit_expression_locations(jobs)
-    configuration = events.get("workflow_run")
-    sources = configuration.get("workflows", []) if isinstance(configuration, dict) else []
-    if isinstance(sources, list) and any(isinstance(name, str) and name in run_named_workflows for name in sources):
-        for location, value in string_scalars(document):
-            for code in expression_code(location, value, implicit_locations, keep_index_literals=True):
-                is_condition = (location in implicit_locations or re.search(r"==|!=|&&|\|\||\b(?:contains|startsWith|endsWith)\s*\(", code, re.I))
-                if is_condition and re.search(WORKFLOW_RUN_NAME_REFERENCE, code, re.I):
-                    flag(location, "workflow-run-name", "Consumers of run-named workflows must select by workflow_run.path, not name")
-    for job_id, job in jobs.items():
-        if not isinstance(job, dict):
-            continue
-        environment = job.get('environment')
-        environment = environment.get('name') if isinstance(environment, dict) else environment
-        if isinstance(environment, str) and environment.casefold() == LIVE_ENVIRONMENT:
-            live_job_locations.append(f'workflow.jobs.{job_id}.')
     for location, value in string_scalars(document):
-        if (path in XCC_WORKFLOWS and re.search(r"\bsecrets\b", value, re.IGNORECASE)
-                or re.search(r"\bsecrets\s*(?:\.\s*ASC_|\[\s*['\"]ASC_)", value, re.IGNORECASE)):
-            allowed_xcc = {"workflow.jobs." + job_id + ".steps[" + str(index) + "].env." + key
-                           for job_id in ({"import"} if path == XCC_IMPORT_WORKFLOW else {"start", "route"} if path == XCC_ROUTE_WORKFLOW else set())
-                           for index, step in enumerate(jobs.get(job_id, {}).get("steps", []))
-                           if step.get("id") in ({"import"} if path == XCC_IMPORT_WORKFLOW else {"prepare", "start", "route"})
-                           and step.get("env") == (XCC_CONTROL_BINDINGS if step.get("id") == "prepare" else XCC_BINDINGS)
-                           for key in XCC_BINDINGS if key.startswith("ASC_")}
-            if path not in XCC_WORKFLOWS or location not in allowed_xcc:
-                flag(location, "xcc-credential", "ASC secrets belong only to the guarded main importer step")
-        live_scope = (any(location.startswith(prefix) for prefix in live_job_locations)
-                      or bool(live_job_locations) and location.startswith('workflow.env.'))
-        if (live_scope and any(names_secrets_root(code) for code in expression_code(location, value, implicit_locations))
-                or any(names_secrets_root(code, LIVE_SECRET_REFERENCE) for code in
-                       expression_code(location, value, implicit_locations, keep_index_literals=True))):
-            if path != LIVE_WORKFLOW or location not in allowed_secret_locations:
-                flag(location, 'live-credential', 'Live secret references belong only to the guarded injection environment')
+        if any(names_secrets_root(code) for code in expression_code(location, value,
+                implicit_expression_locations(jobs), keep_index_literals=True)):
+            flag(location, "credential", "Retained workflows cannot read repository secrets")
     for location, item in walk_mappings(document):
         name = item.get("environment")
         name = name.get("name") if isinstance(name, dict) else name
         if isinstance(name, str) and '${{' in name:
             flag(location, 'live-credential', 'Environment names must be literal to verify credential isolation')
-        if isinstance(name, str) and name.casefold() in {LIVE_ENVIRONMENT, "test-server"}:
-            refusal = (location == "workflow.jobs.live-environment-refusal" and
-                       item.get("if") == "github.event_name == 'workflow_dispatch' && inputs.probe_environment_refusal && github.ref != 'refs/heads/main'" and
-                       item.get("permissions") == {} and item.get("steps") == [{"run": "/usr/bin/false"}])
-            consumer = (location == "workflow.jobs.live-unit" and item.get("needs") == LIVE_UNIT_NEEDS and
-                        item.get("if") == LIVE_UNIT_CONDITION)
-            if path != LIVE_WORKFLOW or name != LIVE_ENVIRONMENT or not (refusal or consumer):
-                flag(location, "live-credential", "Live environment belongs only to guarded nightly units or the credential-free refusal probe")
         env = item.get("env", {})
-        if isinstance(env, dict) and any("secrets.IMMICH_TEST_SERVER_" in str(value) or key in LIVE_BINDINGS for key, value in env.items()):
-            consumer = jobs.get("live-unit", {})
-            steps = consumer.get("steps", [])
-            if (path != LIVE_WORKFLOW or env != LIVE_BINDINGS or item.get("id") != "live" or item not in steps
-                    or consumer.get("environment") != LIVE_ENVIRONMENT
-                    or consumer.get("if") != LIVE_UNIT_CONDITION
-                    or not any(step.get("run") == "/usr/bin/python3 -B scripts/ci_live_tests.py admit" for step in steps[:steps.index(item)])):
-                flag(location, "live-credential", "Live secrets belong only to test-time injection after credential-free admission")
+    implicit_locations = implicit_expression_locations(jobs)
     trusted = path in TRUSTED_WORKFLOWS or bool({"pull_request_target", "workflow_run"} & set(events))
-    if path in PUBLISHER_COMMANDS and isinstance(document.get("env"), dict):
-        if any(isinstance(key, str) and key.startswith("CI_APP_") for key in document["env"]):
-            flag("env", "publisher-credential", "App credentials cannot be inherited from workflow environment")
-    if path == ".github/workflows/ci-ui.yml":
-        from ci_publish_git import UI_CAPACITIES, scoped_acceleration_intent, scoped_packing_intent
-        try:
-            packed = scoped_packing_intent(source)
-            accelerated = scoped_acceleration_intent(source)
-        except ValueError as error:
-            flag("jobs", "ui-shards", str(error))
-            packed, accelerated = False, False
-        split_ios = "iphone-shards" in jobs or "ipad-shards" in jobs
-        if packed and ("shards" in jobs or not all(key in jobs for key in ("iphone-shards", "ipad-shards"))):
-            flag("jobs", "ui-shards", "Packed UI requires separate iPhone and iPad matrices bound to their device outputs")
-        ui_keys = ("iphone-shards", "ipad-shards", "appletv-shards") if split_ios else ("shards", "appletv-shards")
-        strategies = [jobs[name].get("strategy", {}) for name in ui_keys
-                      if isinstance(jobs.get(name), dict)]
-        capacities = [strategy.get("max-parallel") if isinstance(strategy, dict) else None
-                      for strategy in strategies]
-        if accelerated:
-            # These are names, not evaluated expressions. Admission replaces
-            # them with base-owned limits whose sum is bounded by five.
-            if len(capacities) != 3 or not split_ios or "shards" in jobs:
-                flag("jobs", "ui-capacity", "Accelerated UI needs three independent device capacities")
-            for device in ("iphone", "ipad", "appletv"):
-                job = jobs.get(device + "-shards", {})
-                strategy = job.get("strategy", {}) if isinstance(job, dict) else {}
-                capacity = strategy.get("max-parallel") if isinstance(strategy, dict) else None
-                phases = [phase for phase, values in UI_CAPACITIES.items() if capacity == values[device]]
-                outputs = jobs.get(phases[0], {}).get("outputs", {}) if len(phases) == 1 else {}
-                name = device + "_capacity"
-                if (len(phases) != 1 or source.count(capacity) != 1
-                        or outputs.get(name) != "${{ steps.select.outputs." + name + " }}"):
-                    flag(f"jobs.{device}-shards.strategy.max-parallel", "ui-capacity",
-                         "Accelerated capacity must bind its own device's trusted selection output")
-        elif (len(capacities) != len(ui_keys) or split_ios and "shards" in jobs
-                or any(type(capacity) is not int or capacity <= 0 for capacity in capacities)
-                or sum(capacities) > 4):
-            flag("jobs", "ui-capacity", "Independent UI matrices need positive literal capacities totaling at most four")
-        if packed and not accelerated:
-            from ci_ui_packing import DEVICE_SLOTS
-            for device, expected in DEVICE_SLOTS.items():
-                job_id = device + "-shards"
-                job = jobs.get(job_id)
-                strategy = job.get("strategy") if isinstance(job, dict) else None
-                capacity = strategy.get("max-parallel") if isinstance(strategy, dict) else None
-                if type(capacity) is not int or capacity != expected:
-                    flag(f"jobs.{job_id}.strategy.max-parallel", "ui-capacity",
-                         f"Packed {device} jobs need the literal packing capacity {expected}")
-    if path == LIVE_WORKFLOW and "change" not in jobs:
-        flag("jobs", "nightly-change-gate", "The nightly needs its change check job")
-    elif path == LIVE_WORKFLOW and (not isinstance(jobs["change"], dict) or jobs["change"].get("outputs") != {"run_nightly": NIGHTLY_CHANGE_OUTPUT}):
-        flag("jobs.change", "nightly-change-gate", "The change job must publish only the verdict step's output")
-    elif path == LIVE_WORKFLOW and not change_verdict_follows_upload(jobs["change"].get("steps")):
-        flag("jobs.change", "nightly-change-gate", "The verdict step must run only after the decision record upload succeeded")
     for job_id, job in jobs.items():
         location = f"jobs.{job_id}"
         if not isinstance(job, dict):
             flag(location, "workflow-format", "Expected a job mapping")
             continue
-        if path in PUBLISHER_COMMANDS and job.get("runs-on") != "ubuntu-24.04":
-            flag(location, "publisher-runner", "Publisher and approval jobs use the pinned Linux runner")
-        if path == LIVE_WORKFLOW and job_id not in NIGHTLY_UNGATED_JOBS and not nightly_job_gated(job_id, jobs):
-            flag(location, "nightly-change-gate", "Every nightly job must be gated by the change check, directly or through a job that is")
-        if path == LIVE_WORKFLOW and job_id in {"change", "aggregate", "ui-aggregate"}:
-            commands = [step["run"] for step in job.get("steps", [])
-                        if isinstance(step, dict) and isinstance(step.get("run"), str)]
-            bootstrap = '/usr/bin/python3 -B scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/nightly-python"'
-            has_bootstrap = any(bootstrap in [line.strip() for line in command.splitlines()] for command in commands)
-            uses_xcode = any(re.search(r"\b(?:xcrun|xcodebuild|DEVELOPER_DIR)\b|--verify-toolchain", command) for command in commands)
-            if job.get("runs-on") != "ubuntu-24.04" or not has_bootstrap or uses_xcode:
-                flag(location, "nightly-aggregate-platform", "Artifact aggregates use Linux and pinned reader packages without Xcode")
-        if path in PUBLISHER_COMMANDS and isinstance(job.get("env"), dict):
-            if any(isinstance(key, str) and key.startswith("CI_APP_") for key in job["env"]):
-                flag(location, "publisher-credential", "App credentials cannot be inherited from job environment")
         if path in CONCURRENCY_WORKFLOWS and "concurrency" in job:
             flag(location, "concurrency-queue", "Producer jobs cannot override the workflow concurrency contract")
-        if approval_workflow and "concurrency" in job:
-            flag(location, "approval-queue", "Approval jobs cannot enter a replaceable concurrency queue")
         permissions = job.get("permissions", document.get("permissions"))
         if not explicit_permissions(permissions):
             flag(location, "permissions", "Job needs explicit permissions, directly or inherited")
-        if (path == ".github/workflows/ci-ui.yml" and job_id in {"iphone-shards", "ipad-shards", "appletv-shards"}
-                or path == LIVE_WORKFLOW and job_id == "ui-shards"):
-            if not verified_archive_transfer(job, nightly=path == LIVE_WORKFLOW,
-                                             group="tvos" if job_id == "appletv-shards" else "ios"):
-                flag(location, "archive-redownload", "UI archives require at most one same-ID/run/pin re-download, both integrity gates before tests, and guarded cleanup")
-        if path == ".github/workflows/ci-ui.yml" and "selection" in jobs and job_id in {"ios-wait", "tvos-wait", "iphone-shards", "ipad-shards", "appletv-shards"}:
-            group = "tvos" if job_id in {"tvos-wait", "appletv-shards"} else "ios"
-            is_wait = job_id.endswith("-wait")
-            needs = "selection" if is_wait else ["selection", group + "-wait"]
-            condition = ("${{ !cancelled() && needs.selection.result == 'success' }}" if is_wait else
-                         "${{ !cancelled() && needs.selection.result == 'success' && needs." + group
-                         + "-wait.result == 'success' && needs." + group + "-wait.outputs.run_github == 'true' }}")
-            if job.get("needs") != needs or job.get("if") != condition:
-                flag(location, "xcc-dependencies", "Each group must wait independently and run GitHub only after its own fallback")
-        elif path == ".github/workflows/ci-ui.yml" and job_id in {"cloud-wait", "appletv-shards"}:
-            expected_needs = "archive" if job_id == "cloud-wait" else ["archive", "cloud-wait"]
-            if job.get("needs") != expected_needs:
-                flag(location, "xcc-dependencies", "Cloud selection and Apple TV must not depend on iOS shards")
-            if job_id == "appletv-shards" and job.get("if") not in {
-                    "${{ !cancelled() && needs.archive.result == 'success' && needs.archive.outputs." + run_output
-                    + " == 'true' && needs.cloud-wait.outputs.appletv_routed != 'true' }}" for run_output in ("run_ui", "run_tvos")}:
-                flag(location, "xcc-dependencies", "Apple TV shards require a successful archive and an unrouted selection")
-        if path == ".github/workflows/ci-ui.yml" and job_id in {"shards", "iphone-shards", "ipad-shards", "appletv-shards"}:
-            strategy = job.get("strategy")
-            if not isinstance(strategy, dict) or strategy.get("fail-fast") is not False:
-                flag(location, "ui-fail-fast", "UI failures must retain every other partition's official results")
-            matrix = strategy.get("matrix", {}) if isinstance(strategy, dict) else {}
-            from ci_publish_git import DYNAMIC_UI_SHARDS, SELECTION_UI_SHARDS
-            platform = "tvos" if job_id == "appletv-shards" else "ios"
-            scope = {"iphone-shards": "iphone", "ipad-shards": "ipad"}.get(job_id, platform)
-            owner = "selection" if "selection" in jobs else "archive"
-            outputs = jobs.get(owner, {}).get("outputs", {}) if isinstance(jobs.get(owner), dict) else {}
-            expressions = SELECTION_UI_SHARDS if owner == "selection" else DYNAMIC_UI_SHARDS
-            scope = "appletv" if owner == "selection" and job_id == "appletv-shards" else scope
-            dynamic = isinstance(matrix, dict) and matrix.get("shard") == expressions[scope]
-            if scope in {"iphone", "ipad"} and (not isinstance(matrix, dict) or matrix.get("device") != [scope]):
-                flag(location, "ui-shards", "Device-specific shard outputs require that one literal device")
-            if packed and scope in {"iphone", "ipad"} and not dynamic:
-                flag(location, "ui-shards", "Packed UI matrices must bind their device-specific shard output")
-            # Admission binds the dynamic list to the trusted selection; the archive step must publish it.
-            if dynamic and any(outputs.get(name) != "${{ steps.select.outputs." + name + " }}"
-                               for name in (scope + "_shards", "run_" + platform)):
-                flag(location, "ui-shards", "Dynamic UI shards must come from the archive selection step")
-            if ui_shards is not None and not dynamic and (not isinstance(matrix, dict) or matrix.get("shard") != ui_shards):
-                flag(location, "ui-shards", "UI matrix shards must equal the ordered manifest shard keys or the bound selection")
-        if path == XCC_IMPORT_WORKFLOW:
-            if (job_id != "import" or job.get("if") != "github.ref == 'refs/heads/main'"
-                    or job.get("runs-on") != "ubuntu-24.04" or job.get("environment") != "xcode-cloud"
-                    or job.get("timeout-minutes") != 10
-                    or permissions != {"contents": "read", "actions": "read", "checks": "read", "pull-requests": "read"}
-                    or job.get("env") or document.get("env")
-                    or job.get("concurrency") != {"group": "ci-xcc-import-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}-${{ inputs.group }}", "cancel-in-progress": False}):
-                flag(location, "xcc-contract", "Importer is bounded, main-only and credential-scoped with read-only grants")
-        if path == XCC_ROUTE_WORKFLOW and job_id == "dispatch-import":
-            if (job.get("if") != "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.route.outputs.recorded == 'true'"
-                    or job.get("needs") != "route" or job.get("runs-on") != "ubuntu-24.04"
-                    or job.get("timeout-minutes") != 5 or "environment" in job or job.get("env")
-                    or permissions != {"contents": "read", "actions": "write", "pull-requests": "read"}
-                    or [step.get("id") for step in job.get("steps", []) if isinstance(step, dict) and step.get("env")] != ["dispatch"]):
-                flag(location, "xcc-contract", "Import forwarding is main-only, credential-free and follows the route job")
-        elif path == XCC_ROUTE_WORKFLOW:
-            start = job_id == "start"
-            expected_if = "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'" + ("" if start else " && needs.start.outputs.poll == 'true'")
-            group = "ci-xcc-account-budget" if start else "ci-xcc-poll-${{ inputs.producer_run_id }}-${{ inputs.producer_attempt }}-${{ inputs.group }}"
-            if (job_id not in {"start", "route"} or job.get("if") != expected_if
-                    or job.get("runs-on") != "ubuntu-24.04" or job.get("environment") != "xcode-cloud"
-                    or job.get("timeout-minutes") != (20 if start else 110) or job.get("env") or document.get("env")
-                    or job.get("concurrency") != {"group": group, "cancel-in-progress": False}
-                    or (not start and job.get("needs") != "start")
-                    or permissions != {"contents": "read", "actions": "read", "checks": "read", "pull-requests": "read"}):
-                flag(location, "xcc-contract", "Short global start lock and separate per-producer polling are main-only and bounded")
-            phase_ids = [step.get("id") for step in job.get("steps", []) if isinstance(step, dict) and step.get("env")]
-            if phase_ids != (["prepare", "arm", "start"] if start else ["route"]):
-                flag(location, "xcc-credential", "Each router job executes only its reviewed credential phases")
-            if not start and job.get("outputs") != {"recorded": "${{ steps.route.outputs.recorded }}"}:
-                flag(location, "xcc-contract", "Import forwarding follows a recorded route decision")
-            if start:
-                steps = job.get("steps", [])
-                post = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "start"]
-                marker = [index for index, step in enumerate(steps) if isinstance(step, dict)
-                          and step.get("with", {}).get("name") == "ci-xcc-post-${{ github.run_id }}-${{ github.run_attempt }}"]
-                receipt = [index for index, step in enumerate(steps) if isinstance(step, dict)
-                           and step.get("with", {}).get("name") == "ci-xcc-start-${{ github.run_id }}-${{ github.run_attempt }}"]
-                arm = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "arm"]
-                prepare = [index for index, step in enumerate(steps) if isinstance(step, dict) and step.get("id") == "prepare"]
-                decision = [index for index, step in enumerate(steps) if isinstance(step, dict)
-                            and step.get("with", {}).get("name") == "ci-xcc-prepare-${{ github.run_id }}-${{ github.run_attempt }}"]
-                if not (len(decision) == len(prepare) == len(arm) == 1 and prepare[0] < decision[0] < arm[0]
-                        and steps[decision[0]].get("if") == "always() && steps.prepare.outputs.recorded == 'true'"
-                        and steps[decision[0]].get("with", {}).get("path") == "${{ runner.temp }}/ci-xcc-route/prepare.json"):
-                    flag(location, "xcc-prepare-record", "Upload the bounded prepare decision before arm, including fallbacks")
-                if not (len(prepare) == len(post) == len(marker) == len(arm) == 1
-                        and prepare[0] < arm[0] < marker[0] < post[0]
-                        and steps[arm[0]].get("if") == "success() && steps.prepare.outputs.post == 'true'"
-                        and steps[marker[0]].get("if") == "success() && steps.arm.outputs.post == 'true'"
-                        and steps[post[0]].get("if") == "success() && steps.prepare.outputs.recorded == 'true'"
-                        and job.get("outputs") == {"poll": "${{ steps.start.outputs.poll }}"}):
-                    flag(location, "xcc-post-marker", "Upload the immutable scheduling POST marker successfully before any start")
-                if not (len(receipt) == len(post) == 1 and receipt[0] > post[0]
-                        and steps[receipt[0]].get("if") == "always() && steps.arm.outputs.post == 'true'"):
-                    flag(location, "xcc-start-record", "Upload armed state even when start is interrupted without outputs")
         if (any(label in str(job.get("runs-on", "")) for label in ("macos-", "xcode-"))
                 and any(re.search(r"\balways\s*\(", code, re.IGNORECASE) for code in expression_code("workflow." + location + ".if", str(job.get("if", "")), implicit_locations))):
             flag(location, "macos-cancellation", "macOS jobs must stop on cancellation; never use job-level always()")
-        if path == XCC_DISPATCH_WORKFLOW and (job_id != "dispatch" or job.get("if") != XCC_DISPATCH_GUARD
-                or job.get("runs-on") != "ubuntu-24.04" or job.get("timeout-minutes") != 5
-                or "environment" in job or job.get("env")
-                or permissions != {"contents": "read", "actions": "write", "pull-requests": "read"}):
-            flag(location, "xcc-contract", "Cloud bridge is main-only, bounded, environment-free and grants only dispatch authority")
-        if path == PROBE_WORKFLOW and permissions != {"contents": "read", "issues": "write"}:
-            flag(location, "probe-contract", "ci-probe grants only contents: read and issues: write at job level")
-        if path == REPORT_WORKFLOW:
-            if (permissions != {"contents": "read", "actions": "read", "checks": "read", "pull-requests": "read", "issues": "write"}
-                    or job.get("runs-on") != "ubuntu-24.04" or "environment" in job
-                    or job.get("if") != "github.ref == 'refs/heads/main' && "
-                    "(github.event_name != 'workflow_run' || "
-                    "(github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' && "
-                    "((github.event.workflow_run.path == '.github/workflows/ci-nightly.yml' && contains(fromJSON('[\"schedule\",\"workflow_dispatch\"]'), github.event.workflow_run.event)) || "
-                    "(contains(fromJSON('[\".github/workflows/ci-gate.yml\",\".github/workflows/ci-ui.yml\"]'), github.event.workflow_run.path) && github.event.workflow_run.event == 'push'))))"
-                    or job.get("concurrency") != {"group": "ci-report-state", "cancel-in-progress": False}):
-                flag(location, "report-contract", "Reporter is serialized, main-only, excludes branch nightly, is environment-free and has only issue write")
         timeout = job.get("timeout-minutes")
         shadow_matrix_timeout = (path == SHADOW_WORKFLOW and job_id == "flows"
                                  and timeout == "${{ matrix.timeout_minutes }}")
@@ -1002,9 +488,8 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
         if "environment" in job:
             environment = job["environment"]
             name = environment.get("name") if isinstance(environment, dict) else environment
-            normalized_name = name.casefold() if isinstance(name, str) else None
             if (not isinstance(name, str) or "${{" in name
-                    or (normalized_name in ENVIRONMENT_WORKFLOWS and path not in ENVIRONMENT_WORKFLOWS[normalized_name])):
+                    or path in TRUSTED_WORKFLOWS):
                 flag(location, "environment", "Protected environments are bound to named workflows; names must be literal")
         steps = job.get("steps")
         if "uses" not in job and (not isinstance(steps, list) or not steps):
@@ -1012,77 +497,21 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
         elif isinstance(steps, list) and any(not isinstance(step, dict) or not ("uses" in step or "run" in step) for step in steps):
             flag(location, "workflow-format", "Each step needs run or uses")
         if trusted and isinstance(steps, list):
-            if path == REPORT_WORKFLOW:
-                collect = [i for i, step in enumerate(steps) if isinstance(step, dict)
-                           and step.get("run", "").endswith("scripts/ci_report.py --phase collect")]
-                sync = [i for i, step in enumerate(steps) if isinstance(step, dict)
-                        and step.get("run", "").endswith("scripts/ci_report.py --phase sync")]
-                daily = [i for i, step in enumerate(steps) if isinstance(step, dict)
-                         and step.get("uses", "").startswith("actions/upload-artifact@")
-                         and step.get("with", {}).get("path") == "${{ runner.temp }}/ci-report/daily"]
-                health = [i for i, step in enumerate(steps) if isinstance(step, dict)
-                          and step.get("uses", "").startswith("actions/upload-artifact@")
-                          and step.get("with", {}).get("path") == "${{ runner.temp }}/ci-report/health"]
-                if not (len(collect) == len(sync) == len(daily) == 1 and collect[0] < daily[0] < sync[0]
-                        and steps[daily[0]].get("if") == "success()" and steps[sync[0]].get("if") == "success()"):
-                    flag(location, "report-contract", "Upload the verified daily rollup before issue synchronization")
-                if not (len(daily) == len(health) == len(sync) == 1 and daily[0] < health[0] < sync[0]
-                        and steps[health[0]].get("if") == "success() && steps.collect.outputs.health_month != ''"):
-                    flag(location, "report-contract", "Upload requested monthly health after daily history and before issue synchronization")
-            if path in PUBLISHER_COMMANDS and any(step.get("run", "").endswith("scripts/ci_publish.py publish")
-                                                 for step in steps if isinstance(step, dict)):
-                checkouts = [step for step in steps if isinstance(step, dict)
-                             and step.get("uses", "").startswith("actions/checkout@")]
-                if len(checkouts) != 1 or checkouts[0].get("with", {}).get("fetch-depth") != 0:
-                    flag(location, "publisher-history", "Publication needs full history for admitted historical readers")
             for index, step in enumerate(steps):
                 if not isinstance(step, dict):
                     continue
                 step_location = f"{location}.steps[{index}]"
-                if path == XCC_DISPATCH_WORKFLOW and "env" in step:
-                    if (step.get("env") != {"CI_WORKFLOW_TOKEN": "${{ github.token }}"} or step.get("id") != "dispatch"
-                            or step.get("run") != '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_dispatch.py'):
-                        flag(step_location, "xcc-credential", "Cloud bridge has only its GitHub dispatch token")
-                if path in XCC_WORKFLOWS and "env" in step:
-                    role = "import" if path == XCC_IMPORT_WORKFLOW else step.get("id")
-                    phase = {"prepare": "prepare", "arm": "arm", "start": "start", "route": "poll"}.get(role)
-                    command = ('"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_import.py' if role == "import" else
-                               '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_dispatch.py import' if role == "dispatch" else
-                               '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_route.py ' + str(phase))
-                    expected_bindings = ({"CI_WORKFLOW_TOKEN": "${{ github.token }}"} if role in {"arm", "dispatch"}
-                                         else XCC_CONTROL_BINDINGS if role == "prepare" else XCC_BINDINGS)
-                    if (step.get("env") != expected_bindings
-                            or role not in ({"import"} if path == XCC_IMPORT_WORKFLOW else {"prepare", "arm", "start", "route", "dispatch"})
-                            or step.get("run") != command):
-                        flag(step_location, "xcc-credential", "ASC credentials belong only to the importer entry point")
-                if (path in PUBLISHER_COMMANDS and step.get("run", "").endswith("scripts/ci_publish.py reevaluate")
-                        and step.get("if") != "steps.admit.outputs.recorded == 'true'"):
-                    flag(step_location, "publisher-admission", "Admission re-evaluates only after recording a new admission")
                 if "run" in step and not trusted_run_allowed(step["run"], path, events):
                     flag(step_location, "trusted-run", "Trusted run must be an allowlisted literal command or entry point")
                 settings = {key: step[key] for key in ("shell", "working-directory") if key in step}
                 if not trusted_run_settings_allowed(settings):
                     flag(step_location, "trusted-run", "Trusted commands require the default workspace and a reviewed shell")
-                if path in PUBLISHER_COMMANDS and isinstance(step.get("env"), dict):
-                    if {"CI_APP_PRIVATE_KEY", "CI_APP_ID"}.intersection(step["env"]):
-                        environment = job.get("environment")
-                        environment_name = environment.get("name") if isinstance(environment, dict) else environment
-                        command = step.get("run", "")
-                        allowed_command = ("publish" if path.endswith("ci-publish.yml") else "approve"
-                                           if path.endswith("ci-approval.yml") else "fallback")
-                        if (environment_name != "ci-publisher" or command !=
-                                '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py ' + allowed_command):
-                            flag(step_location, "publisher-credential", "App credentials belong only to the guarded status-writing step")
-        if path == ".github/workflows/ci-approval.yml" and job.get("environment") == "ci-approval":
-            if (permissions != {} or job.get("env") or document.get("env")
-                    or steps != [{"run": "/usr/bin/true"}]):
-                flag(location, "approval-wait", "Approval wait must have no credentials, checkout, actions or token grants")
         if trusted and any(key in job for key in ("container", "services")):
             flag(location, "trusted-run", "Trusted jobs cannot start unreviewed containers or services")
     for location, item in walk_mappings(document):
         permissions = item.get("permissions")
-        if isinstance(permissions, dict) and permissions.get("issues") == "write" and path not in ISSUE_WRITE_WORKFLOWS:
-            flag(location, "issue-write", "Issue writes are reserved for ci-probe and ci-report")
+        if isinstance(permissions, dict) and any(value == "write" for value in permissions.values()):
+            flag(location, "write-permission", "Retained workflows require read-only permissions")
         if "uses" in item and not pinned_action(item["uses"]):
             flag(location, "action-pin", "Remote uses must have a full commit SHA; container actions need a sha256 digest")
         if not trusted:
@@ -1092,12 +521,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
                             "RUBYLIB", "PERL5LIB", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES"}
         if isinstance(environment, dict) and any(key in loader_variables for key in environment):
             flag(location, "artifact-execution", "Artifact data must not control executable search or interpreter startup")
-        bindings = (PRIVACY_ENVIRONMENT if path == PRIVACY_WORKFLOW else PROBE_ENVIRONMENT
-                    if path == PROBE_WORKFLOW else {"CI_WORKFLOW_TOKEN": "${{ github.token }}"} if path == XCC_DISPATCH_WORKFLOW
-                    else XCC_CONTROL_BINDINGS if path == XCC_ROUTE_WORKFLOW else XCC_BINDINGS if path in XCC_WORKFLOWS
-                    else {"CI_REPORT_TOKEN": "${{ github.token }}"} if path == REPORT_WORKFLOW
-                    else SHADOW_BINDINGS if path == SHADOW_WORKFLOW
-                    else PUBLISHER_BINDINGS if path in PUBLISHER_COMMANDS else {})
+        bindings = PRIVACY_ENVIRONMENT if path == PRIVACY_WORKFLOW else SHADOW_BINDINGS if path == SHADOW_WORKFLOW else {}
         if (not isinstance(environment, dict) or any(key not in bindings or value != bindings[key]
                 for key, value in environment.items())):
             flag(location, "trusted-environment", "Trusted environment variables need an explicit reviewed binding")
@@ -1111,41 +535,11 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
         if not isinstance(options, dict):
             flag(location, "workflow-format", "Action inputs must be a mapping")
             continue
-        publisher_upload = (path == ".github/workflows/ci-publish.yml"
-                            and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-                            and options == {"name": "ci-admission-${{ steps.admit.outputs.run_id }}",
-                                            "path": "${{ runner.temp }}/ci-admission/record.json",
-                                            "if-no-files-found": "error", "retention-days": 30})
-        role = "import" if path == XCC_IMPORT_WORKFLOW else "route"
-        xcc_upload = (path in XCC_WORKFLOWS and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-                      and options == {"name": "ci-xcc-" + role + "-${{ steps." + role + ".outputs.producer_run_id }}-${{ steps." + role + ".outputs.producer_attempt }}-${{ inputs.group }}",
-                                      "path": "${{ runner.temp }}/ci-xcc-" + role + ("/cloud.json" if role == "import" else "/route.json"),
-                                      "if-no-files-found": "error", "retention-days": 30}
-                      and item.get("if") == ("success() && steps.import.outputs.imported == 'true'" if role == "import"
-                                             else "success() && steps.route.outputs.recorded == 'true'"))
-        if path == XCC_ROUTE_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02":
-            xcc_upload |= any(options == {"name": "ci-xcc-" + stage + "-${{ github.run_id }}-${{ github.run_attempt }}",
-                                          "path": "${{ runner.temp }}/ci-xcc-route/" + member + ".json",
-                                          "if-no-files-found": "error", "retention-days": 90}
-                              and item.get("if") == guard for stage, member, guard in (
-                                  ("prepare", "prepare", "always() && steps.prepare.outputs.recorded == 'true'"),
-                                  ("post", "post", "success() && steps.arm.outputs.post == 'true'"),
-                                  ("start", "start", "always() && steps.arm.outputs.post == 'true'")))
-        report_upload = (path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-                         and any(options == {"name": f"ci-report-{name}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}",
-                                             "path": "${{ runner.temp }}/ci-report/" + directory,
-                                             "if-no-files-found": missing, "retention-days": retention}
-                                 for name, directory, missing, retention in (("daily", "daily", "error", 90),
-                                     ("runs", "runs", "ignore", 7))) or
-                         path == REPORT_WORKFLOW and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-                         and options == {"name": "ci-report-health-${{ steps.collect.outputs.health_month }}-${{ github.run_id }}-${{ github.run_attempt }}",
-                                         "path": "${{ runner.temp }}/ci-report/health", "if-no-files-found": "error", "retention-days": 90})
         shadow_artifact = path == SHADOW_WORKFLOW and shadow_artifact_allowed(item)
         shadow_bad_artifact = (path == SHADOW_WORKFLOW and isinstance(uses, str)
                                and uses.split("@")[0].lower() in {"actions/download-artifact", "actions/upload-artifact"}
                                and not shadow_artifact)
-        if "uses" in item and (shadow_bad_artifact or not publisher_upload and not report_upload and not xcc_upload
-                              and not shadow_artifact and not trusted_action_allowed(uses, options)):
+        if "uses" in item and (shadow_bad_artifact or not shadow_artifact and not trusted_action_allowed(uses, options)):
             flag(location, "trusted-action", "Trusted uses must be an approved pinned remote action or isolated repository-local action")
         if isinstance(uses, str) and uses.split("@")[0].lower() == "actions/checkout":
             ref = options.get("ref")
@@ -1170,17 +564,12 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
                     or not (repository is None or isinstance(repository, str))
                     or repository not in {None, "${{ github.repository }}"}):
                 flag(location, "trusted-checkout", "Trusted checkout must use this repository's default branch (privacy may use base.sha)")
-            if path == REPORT_WORKFLOW and (ref != "main" or options.get("fetch-depth") != 0):
-                flag(location, "report-contract", "Reporter needs explicit main checkout and full history")
             if path == SHADOW_WORKFLOW and options != {
                     "ref": "${{ needs.plan.outputs.head_sha }}" if shadow_tested_checkout else
                            "${{ needs.plan.outputs.control_sha }}" if shadow_control_checkout else
                            "${{ github.sha }}" if shadow_plan_checkout else "main",
                     "fetch-depth": 0, "persist-credentials": False}:
                 flag(location, "trusted-checkout", "Shadow executes only the plan-admitted main ancestor, with full history and no stored token")
-            if path in XCC_WORKFLOWS | {XCC_DISPATCH_WORKFLOW} and (ref != "main" or options.get("fetch-depth") != 0
-                                                or options.get("persist-credentials") is not False):
-                flag(location, "xcc-contract", "Importer needs main, full history and no persisted checkout credential")
         if isinstance(uses, str) and "download-artifact" in uses.lower() and not artifact_path(options.get("path")):
             flag(location, "artifact-execution", "Download artifact data only into an explicit ci-artifacts directory")
         if "script" in options:
@@ -1192,8 +581,6 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent,
                         help="Repository root (default: this script's repository)")
-    parser.add_argument("--check-ui-shards", action="store_true",
-                        help="Also validate UI assignments, matrix coverage and feature-area coverage against both platforms")
     args = parser.parse_args(argv)
     directory = args.root / ".github/workflows"
     paths = sorted(directory.glob("*.yml")) + sorted(directory.glob("*.yaml"))
@@ -1207,20 +594,6 @@ def main(argv=None):
         python_identities(python_sources(args.root / "scripts"), macos_python_tests=MACOS_PYTHON_TESTS)
     except (OSError, UnicodeError, ValueError) as error:
         violations.append(Violation("scripts/run_host_checks.py", "inventory", "macos-python-tests", str(error)))
-    ui_shards = None
-    populations = None
-    if args.check_ui_shards:
-        from ci_population import ui_identities
-        from ci_ui_shards import MANIFEST_PATH, parse_shard_manifest, validate_shard_assignments
-        try:
-            sources = {path.relative_to(args.root).as_posix(): path.read_text(encoding="utf-8")
-                       for path in (args.root / "immichSlidesUITests").rglob("*.swift")}
-            populations = {"ui-" + platform: ui_identities(sources, platform) for platform in ("ios", "tvos")}
-            raw_manifest = (args.root / MANIFEST_PATH).read_text(encoding="utf-8")
-            validate_shard_assignments(raw_manifest, populations)
-            ui_shards = list(parse_shard_manifest(raw_manifest)["shards"])
-        except (OSError, UnicodeError, ValueError) as error:
-            violations.append(Violation(MANIFEST_PATH, "manifest", "ui-shards", str(error)))
     workflow_sources = {}
     run_named_workflows = set()
     for path in paths:
@@ -1238,31 +611,7 @@ def main(argv=None):
         except (OSError, UnicodeError, ValueError):
             violations.append(Violation(relative, "workflow", "workflow-format", "Cannot read a regular UTF-8 workflow"))
     for relative, source in workflow_sources.items():
-        violations.extend(check_workflow(relative, source, ui_shards=ui_shards, run_named_workflows=run_named_workflows))
-    if args.check_ui_shards:
-        from ci_ui_selection import AREA_MAP_PATH, check_area_map
-        from ci_ui_test_kinds import classify_ui_methods
-        from ci_ui_packing import DURATIONS_PATH, parse_durations
-        try:
-            parse_durations((args.root / DURATIONS_PATH).read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, ValueError) as error:
-            violations.append(Violation(DURATIONS_PATH, "durations", "ui-durations", str(error)))
-        try:
-            check_area_map(args.root)
-        except (OSError, UnicodeError, ValueError) as error:
-            violations.append(Violation(AREA_MAP_PATH, "map", "ui-areas", str(error)))
-        if populations is not None:
-            try:
-                classify_ui_methods(populations)
-            except ValueError as error:
-                violations.append(Violation("scripts/ci_ui_test_kinds.py", "inventory", "ui-kinds", str(error)))
-        if populations is not None and not any(item.rule == "ui-areas" for item in violations):
-            from ci_ui_flows import EXCEPTIONS_PATH, check_flows
-            try:
-                violations.extend(Violation(AREA_MAP_PATH, "flow", "ui-flows", message)
-                                  for message in check_flows(args.root, populations))
-            except (OSError, UnicodeError, ValueError) as error:
-                violations.append(Violation(EXCEPTIONS_PATH, "flow", "ui-flows", str(error)))
+        violations.extend(check_workflow(relative, source, run_named_workflows=run_named_workflows))
     for violation in violations:
         print(violation, file=sys.stderr)
     print(f"Workflow policy {'FAIL' if violations else 'PASS'}: {len(paths)} workflows, {len(violations)} violations")

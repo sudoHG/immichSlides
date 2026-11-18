@@ -1,4 +1,3 @@
-import sys
 import unittest
 import copy
 import json
@@ -976,62 +975,48 @@ class TimeoutLiteralTests(unittest.TestCase):
 
 class SmokeManifestTests(unittest.TestCase):
     def test_manifest_rejects_execution_and_compiled_selector_drift(self):
-        from strict_e2e_smoke import validate_manifest, unique_object
-        planned = [{"id": "iphone-first-boot", "device": "iphone", "configuration": "Debug", "fixture": "a"}]
-        manifest = {"schema_version": 1, "flows": [{"id": "iphone-first-boot", "device": "iphone",
-            "platform": "ios", "configuration": "Debug", "fixtures": ["a"], "selector": "SmokeFlowIOSUITests/testFirstBoot"}]}
-        methods = {"SmokeFlowIOSUITests/testFirstBoot": {"ios"}}
-        self.assertEqual(manifest["flows"], validate_manifest(manifest, planned, methods))
+        from strict_e2e_smoke import load_manifest, validate_manifest, unique_object
+        manifest, methods = load_manifest(Path(__file__).resolve().parent.parent)
+        self.assertEqual(manifest["flows"], validate_manifest(manifest, methods))
+        index = next(i for i, flow in enumerate(manifest["flows"]) if flow["id"] == "iphone-first-boot")
         mutations = [
             (lambda p: p.update(schema_version=True), "smoke-manifest-shape"),
             (lambda p: p.update(flows=None), "smoke-manifest-shape"),
             (lambda p: p.update(extra=True), "smoke-manifest-shape"),
-            (lambda p: p["flows"][0].update(extra=True), "smoke-manifest-shape"),
-            (lambda p: p["flows"].append(copy.deepcopy(p["flows"][0])), "smoke-manifest-population: duplicate iphone-first-boot"),
+            (lambda p: p["flows"][index].update(extra=True), "smoke-manifest-shape"),
+            (lambda p: p["flows"].append(copy.deepcopy(p["flows"][index])), "smoke-manifest-population: duplicate iphone-first-boot"),
             (lambda p: p["flows"].clear(), "smoke-manifest-population: missing iphone-first-boot"),
-            (lambda p: p["flows"][0].update(id="unknown"), "smoke-manifest-population: unknown unknown"),
-            (lambda p: p["flows"][0].update(device="ipad"), "smoke-manifest-mapping: iphone-first-boot device"),
-            (lambda p: p["flows"][0].update(platform="tvos"), "smoke-manifest-mapping: iphone-first-boot platform"),
-            (lambda p: p["flows"][0].update(configuration="Release"), "smoke-manifest-mapping: iphone-first-boot configuration"),
-            (lambda p: p["flows"][0].update(fixtures=["a", "b"]), "smoke-manifest-mapping: iphone-first-boot fixtures"),
-            (lambda p: p["flows"][0].update(selector="BootUITests/testMissing"), "smoke-manifest-selector: iphone-first-boot"),
-            (lambda p: p["flows"][0].update(selector=[]), "smoke-manifest-selector: iphone-first-boot"),
+            (lambda p: p["flows"][index].update(id="unknown"), "smoke-manifest-population: unknown unknown"),
+            (lambda p: p["flows"][index].update(device="ipad"), "smoke-manifest-mapping: iphone-first-boot device"),
+            (lambda p: p["flows"][index].update(platform="tvos"), "smoke-manifest-mapping: iphone-first-boot platform"),
+            (lambda p: p["flows"][index].update(configuration="Release"), "smoke-manifest-mapping: iphone-first-boot configuration"),
+            (lambda p: p["flows"][index].update(fixtures=["a", "b"]), "smoke-manifest-mapping: iphone-first-boot fixtures"),
+            (lambda p: p["flows"][index].update(selector="BootUITests/testMissing"), "smoke-manifest-binding: iphone-first-boot"),
+            (lambda p: p["flows"][index].update(selector=[]), "smoke-manifest-binding: iphone-first-boot"),
+            (lambda p: p["core_flow_ids"].clear(), "smoke-manifest-shape"),
         ]
         for mutate, message in mutations:
             with self.subTest(message=message):
                 changed = copy.deepcopy(manifest)
                 mutate(changed)
                 with self.assertRaisesRegex(ValueError, message):
-                    validate_manifest(changed, planned, methods)
+                    validate_manifest(changed, methods)
         with self.assertRaisesRegex(ValueError, "smoke-manifest-selector: iphone-first-boot"):
-            validate_manifest(manifest, planned, {"SmokeFlowIOSUITests/testFirstBoot": {"tvos"}})
+            validate_manifest(manifest, dict(methods, **{"SmokeFlowIOSUITests/testFirstBoot": {"tvos"}}))
         with self.assertRaisesRegex(ValueError, "smoke-manifest-shape: duplicate JSON key schema_version"):
             json.loads('{"schema_version":1,"schema_version":1,"flows":[]}', object_pairs_hook=unique_object)
 
-    def test_smoke_binding_requires_the_contracted_method_and_bidirectional_inventory(self):
-        from strict_e2e_smoke import validate_manifest
-        planned = [{"id": "iphone-first-boot", "device": "iphone", "configuration": "Debug", "fixture": "a"}]
-        selector = "SmokeFlowIOSUITests/testFirstBoot"
-        manifest = {"schema_version": 1, "flows": [dict(planned[0], platform="ios", fixtures=["a"], selector=selector)]}
-        del manifest["flows"][0]["fixture"]
-        inventory = [{"kind": "ui", "identifier": selector, "target_home": "smoke", "smoke_flows": ["iphone-first-boot"]}]
-        methods = {selector: {"ios"}, "SmokeFlowIOSUITests/testSettingsRelaunch": {"ios"},
-                   "LegacyUITests/testFirstBoot": {"ios"}}
-        self.assertEqual(manifest["flows"], validate_manifest(manifest, planned, methods, inventory))
+    def test_smoke_binding_requires_the_contracted_method_and_core_population(self):
+        from strict_e2e_smoke import load_manifest, validate_manifest, select_scope
+        manifest, methods = load_manifest(Path(__file__).resolve().parent.parent)
+        self.assertEqual(23, len(validate_manifest(manifest, methods)))
+        self.assertEqual(7, len(select_scope(manifest["flows"], "core")))
+        self.assertEqual(20, len({flow["selector"] for flow in manifest["flows"]}))
         for changed_selector in ("SmokeFlowIOSUITests/testSettingsRelaunch", "LegacyUITests/testFirstBoot"):
+            changed = copy.deepcopy(manifest)
+            next(flow for flow in changed["flows"] if flow["id"] == "iphone-first-boot")["selector"] = changed_selector
             with self.subTest(selector=changed_selector), self.assertRaisesRegex(ValueError, "smoke-manifest-binding"):
-                changed = copy.deepcopy(manifest)
-                changed["flows"][0]["selector"] = changed_selector
-                validate_manifest(changed, planned, methods, inventory)
-        for change in (lambda rows: rows.clear(), lambda rows: rows.append(copy.deepcopy(rows[0])),
-                       lambda rows: rows[0].update(kind="strict"), lambda rows: rows[0].update(target_home="unit"),
-                       lambda rows: rows[0].update(smoke_flows=[]),
-                       lambda rows: rows[0].update(smoke_flows=["iphone-first-boot", "unknown"]),
-                       lambda rows: rows.append(dict(rows[0], identifier="SmokeFlowIOSUITests/testUnused"))):
-            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "smoke-manifest-inventory"):
-                changed = copy.deepcopy(inventory)
-                change(changed)
-                validate_manifest(manifest, planned, methods, changed)
+                validate_manifest(changed, methods)
 
     def test_smoke_is_excluded_from_every_existing_plan_population(self):
         from strict_e2e_smoke import validate_exclusions
@@ -1039,8 +1024,7 @@ class SmokeManifestTests(unittest.TestCase):
         flows = [{"platform": platform, "selector": selector} for selector, platforms in methods.items() for platform in platforms]
         plans = {platform: {name: {"testTargets": [{"target": {"name": "immichSlidesUITests"}, **fields}]}
                             for name, fields in (("default", {"skippedTests": ["SmokeFlowIOSUITests", "SmokeFlowTVOSUITests"]}),
-                                                 ("Evidence", {"selectedTests": ["LegacyUITests"]}),
-                                                 ("XcodeCloud", {"selectedTests": ["LegacyUITests"]}))}
+                                                 ("Evidence", {"selectedTests": ["AppStoreScreenshotUITests"]}))}
                  for platform in ("ios", "tvos")}
         validate_exclusions(flows, methods, plans)
         for platform in plans:
@@ -1062,47 +1046,32 @@ class SmokeManifestTests(unittest.TestCase):
             root = Path(temporary)
             (root / "scripts").mkdir()
             (root / "scripts/smoke-flows.json").write_text('{"schema_version":2,"flows":[]}')
-            (root / "scripts/ci-test-tiers.json").write_text('{"smoke_flows":[],"inventory":[]}')
-            with patch.object(conv, "check_repository", return_value=[]), patch.object(conv, "check_test_tier_plan", return_value=[]), \
-                    patch.object(conv, "repository_timeout_inventory", return_value=[]):
+            with patch.object(conv, "check_repository", return_value=[]), patch.object(conv, "repository_timeout_inventory", return_value=[]):
                 self.assertEqual(1, conv.main(["--root", temporary]))
 
-    def test_main_checks_inventory_and_plan_exclusion_after_a_valid_compiled_manifest(self):
+    def test_main_checks_plan_exclusion_after_a_valid_compiled_manifest(self):
         import io
         from contextlib import redirect_stdout
-        from strict_e2e_smoke import MANIFEST
+        from strict_e2e_smoke import MANIFEST, load_manifest
+        manifest, methods = load_manifest(Path(__file__).resolve().parent.parent)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "scripts").mkdir()
             (root / "immichSlidesUITests").mkdir()
-            (root / "immichSlidesUITests/SmokeFlowIOSUITests.swift").write_text(
-                '#if os(iOS)\nfinal class SmokeFlowIOSUITests: XCTestCase {\nfunc testFirstBoot() {}\n}\n#endif\n')
-            selector = "SmokeFlowIOSUITests/testFirstBoot"
-            flow = {"id": "iphone-first-boot", "platform": "ios", "device": "iphone", "configuration": "Debug",
-                    "fixtures": ["a"], "selector": selector}
-            (root / MANIFEST).write_text(json.dumps({"schema_version": 1, "flows": [flow]}))
-            plan = {"smoke_flows": [{"id": flow["id"], "device": "iphone", "configuration": "Debug", "fixture": "a"}],
-                    "inventory": [{"kind": "ui", "identifier": selector, "target_home": "smoke", "smoke_flows": [flow["id"]]}]}
-            tier_path = root / "scripts/ci-test-tiers.json"
-            tier_path.write_text(json.dumps(plan))
+            for platform, cls in (("iOS", "SmokeFlowIOSUITests"), ("tvOS", "SmokeFlowTVOSUITests")):
+                functions = sorted({selector.split("/")[1] for selector in methods if selector.startswith(cls + "/")})
+                source = "#if os(" + platform + ")\nfinal class " + cls + ": XCTestCase {\n"
+                source += "\n".join("func " + name + "() {}" for name in functions) + "\n}\n#endif\n"
+                (root / ("immichSlidesUITests/" + cls + ".swift")).write_text(source)
+            (root / MANIFEST).write_text(json.dumps(manifest))
             for suffix in ("iOS", "tvOS"):
                 for stem, fields in (("immichSlides-", {"skippedTests": ["SmokeFlowIOSUITests", "SmokeFlowTVOSUITests"]}),
-                                     ("immichSlides-Evidence-", {"selectedTests": ["LegacyUITests"]}),
-                                     ("XcodeCloud-UI-", {"selectedTests": ["LegacyUITests"]})):
+                                     ("immichSlides-Evidence-", {"selectedTests": ["AppStoreScreenshotUITests"]})):
                     (root / (stem + suffix + ".xctestplan")).write_text(json.dumps({"testTargets": [
                         {"target": {"name": "immichSlidesUITests"}, **fields}]}))
-            with patch.object(conv, "check_repository", return_value=[]), patch.object(conv, "check_test_tier_plan", return_value=[]), \
-                    patch.object(conv, "repository_timeout_inventory", return_value=[]):
+            with patch.object(conv, "check_repository", return_value=[]), patch.object(conv, "repository_timeout_inventory", return_value=[]):
                 with redirect_stdout(io.StringIO()):
                     self.assertEqual(0, conv.main(["--root", temporary]))
-                invalid = copy.deepcopy(plan)
-                invalid["inventory"][0]["target_home"] = "unit"
-                tier_path.write_text(json.dumps(invalid))
-                output = io.StringIO()
-                with redirect_stdout(output):
-                    self.assertEqual(1, conv.main(["--root", temporary]))
-                self.assertIn("smoke-manifest-inventory", output.getvalue())
-                tier_path.write_text(json.dumps(plan))
                 path = root / "immichSlides-iOS.xctestplan"
                 leaked = json.loads(path.read_text())
                 leaked["testTargets"][0]["skippedTests"] = []
@@ -1114,265 +1083,7 @@ class SmokeManifestTests(unittest.TestCase):
 
 
 class RepositoryTests(unittest.TestCase):
-    def test_target_tier_plan_rejects_population_drift_and_unproved_coverage(self):
-        plan = json.loads((REPO_ROOT / conv.TEST_TIER_PLAN_PATH).read_text())
-        context = conv.test_tier_context(REPO_ROOT)
-        self.assertEqual([], conv.validate_test_tier_plan(plan, *context))
-        mutations = (
-            ('unsupported version', lambda p: p.update(schema_version=2), 'tier-plan-version'),
-            ('accidental activation', lambda p: p.update(mode='active'), 'tier-plan-mode'),
-            ('changed retry policy', lambda p: p['migration'].update(yellow_and_retry='expanded'), 'tier-plan-migration'),
-            ('nonboolean removal flag', lambda p: p['migration'].update(unit_coverage_prs_remove_ui_tests=0), 'tier-plan-migration'),
-            ('missing smoke', lambda p: p['smoke_flows'].pop(), 'tier-plan-smoke-population'),
-            ('duplicate smoke', lambda p: p['smoke_flows'].__setitem__(0, p['smoke_flows'][1]), 'tier-plan-smoke-population'),
-            ('missing UI method', lambda p: p['inventory'].pop(), 'tier-plan-inventory'),
-            ('duplicate strict row', lambda p: p['inventory'].append(p['inventory'][0]), 'tier-plan-inventory'),
-            ('unknown home', lambda p: p['inventory'][0].update(target_home='ignore'), 'tier-plan-home'),
-            ('unproved coverage', lambda p: (p['inventory'][0].update(status='covered'),
-                                            p['inventory'][0].pop('mutation_proof', None)), 'tier-plan-coverage'),
-            ('unknown status', lambda p: p['inventory'][0].update(status='done'), 'tier-plan-coverage'),
-            ('nonexistent replacement', lambda p: p['inventory'][0].update(replacement_tests=['MissingTests/never runs']), 'tier-plan-replacement'),
-            ('unknown smoke reference', lambda p: p['inventory'][0].update(smoke_flows=['missing']), 'tier-plan-replacement'),
-            ('missing smoke mapping', lambda p: next(r for r in p['inventory']
-                                                    if r['identifier'] == p['smoke_flows'][0]['source']['identifier']
-                                                    ).update(smoke_flows=[]), 'tier-plan-replacement'),
-            ('wrong source configuration', lambda p: p['smoke_flows'][0].update(configuration='Release'), 'tier-plan-smoke-source'),
-            ('wrong selector', lambda p: p['smoke_flows'][0]['source'].update(selector='MissingUITests/testNoSuchMethod'), 'tier-plan-smoke-source'),
-            ('wrong fixture', lambda p: p['smoke_flows'][0].update(fixture='b'), 'tier-plan-smoke-contract'),
-            ('lost assertion boundary', lambda p: p['smoke_flows'][0].update(must_not_assert=[]), 'tier-plan-smoke-contract'),
-            ('empty user path', lambda p: p['smoke_flows'][0].update(user_path=''), 'tier-plan-smoke-contract'),
-            ('missing weekly group', lambda p: p['weekly_human_review']['groups'].pop(), 'tier-plan-human-review'),
-            ('missing review recording', lambda p: p['weekly_human_review']['groups'][0].update(recordings=[]), 'tier-plan-human-review'),
-            ('unknown review reference', lambda p: p['inventory'][0].update(human_review_groups=['missing']), 'tier-plan-replacement'),
-            ('missing release device', lambda p: p['release_full_set'].pop(), 'tier-plan-release'),
-            ('missing release smoke', lambda p: p['release_full_set'][0]['smoke_flows'].pop(), 'tier-plan-release'),
-            ('missing release visuals', lambda p: p['release_full_set'][0].update(human_review_groups=[]), 'tier-plan-release'),
-            ('missing Release build', lambda p: p['release_full_set'][0].update(configurations=['Debug']), 'tier-plan-release'),
-            ('malformed inventory', lambda p: p.update(inventory=None), 'tier-plan-shape'),
-        )
-        for label, mutate, expected in mutations:
-            with self.subTest(mutation=label):
-                changed = copy.deepcopy(plan)
-                mutate(changed)
-                self.assertIn(expected, [e.split(':', 1)[0] for e in conv.validate_test_tier_plan(changed, *context)])
-        self.assertEqual([], conv.check_test_tier_plan(REPO_ROOT))
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "scripts").mkdir()
-            (root / conv.TEST_TIER_PLAN_PATH).write_text('{"schema_version":')
-            self.assertEqual(["tier-plan-input"], rules(conv.check_test_tier_plan(root)))
-            self.assertEqual(1, conv.main(["--root", directory]))
-            (root / conv.TEST_TIER_PLAN_PATH).write_text(json.dumps(plan))
-            (root / "immichSlidesUITests").mkdir()
-            (root / "immichSlidesUITests/Flow.swift").write_text('func testUnowned() {}')
-            violations = conv.check_test_tier_plan(root)
-            self.assertEqual(["tier-plan-input"], rules(violations))
-            self.assertEqual("immichSlidesUITests/Flow.swift: testUnowned() is not a member of a direct XCTestCase subclass",
-                             violations[0].detail)
 
-    def test_target_tier_plan_reports_each_bad_row_and_accepts_proven_replacements(self):
-        plan = json.loads((REPO_ROOT / conv.TEST_TIER_PLAN_PATH).read_text())
-        context = conv.test_tier_context(REPO_ROOT)
-        row_id = plan['inventory'][0]['identifier']
-
-        def reject(mutate, rule, *details):
-            changed = copy.deepcopy(plan)
-            mutate(changed)
-            errors = conv.validate_test_tier_plan(changed, *context)
-            matching = [e for e in errors if e.startswith(rule + ':')]
-            self.assertTrue(matching, errors)
-            for detail in details:
-                self.assertTrue(any(detail in e for e in matching), errors)
-
-        reject(lambda p: p['inventory'][0].pop('status'), 'tier-plan-shape', row_id, 'missing', 'status')
-        reject(lambda p: p['inventory'][0].update(typo=[]), 'tier-plan-shape', row_id, 'extra', 'typo')
-        reject(lambda p: p['inventory'][0].update(replacement_tests=['MissingTests/unknown']),
-               'tier-plan-replacement', row_id, 'MissingTests/unknown')
-        reject(lambda p: p['inventory'][0].update(human_review_groups=['tv-focus']),
-               'tier-plan-review-device', row_id, 'tv-focus')
-        ipad_id = 'p2-cache-smoke|normal|ipad|Debug|a'
-        reject(lambda p: next(r for r in p['inventory'] if r['identifier'] == ipad_id).update(
-            smoke_flows=['iphone-first-boot']), 'tier-plan-smoke-device', ipad_id, 'iphone-first-boot', 'ipad')
-        tv_id = 'FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterUpFromThirdCardCanReachTopBar'
-        reject(lambda p: next(r for r in p['inventory'] if r['identifier'] == tv_id).update(
-            human_review_groups=['ipad-rotation-split']), 'tier-plan-review-device', tv_id, 'ipad-rotation-split')
-        reject(lambda p: next(r for r in p['inventory'] if r['identifier'] == tv_id).update(
-            smoke_flows=['iphone-album-selection']), 'tier-plan-smoke-device', tv_id, 'iphone-album-selection', 'tv')
-        reject(lambda p: next(r for r in p['inventory'] if r['identifier'] == tv_id).update(target_home='pr-smoke'),
-               'tier-plan-pr-smoke', tv_id, 'not be')
-        reject(lambda p: p['inventory'][0].update(identifier='malformed'),
-               'tier-plan-identifier', 'malformed')
-        reject(lambda p: p['inventory'][0].update(identifier='a||iphone|Debug|a'),
-               'tier-plan-identifier', 'a||iphone|Debug|a')
-        reject(lambda p: p['smoke_flows'][0].update(id=[]), 'tier-plan-shape', 'id')
-        reject(lambda p: p['smoke_flows'][0].update(peer_fixture='b'), 'tier-plan-smoke-contract', 'peer_fixture')
-        reject(lambda p: p['migration'].update(nightly_budget_minutes=''), 'tier-plan-shape', 'nightly_budget_minutes')
-        for field in ('smoke_flows', 'inventory', 'release_full_set'):
-            reject(lambda p: p.update({field: {}}), 'tier-plan-shape', field)
-        for field in ('replacement_tests', 'smoke_flows', 'human_review_groups', 'mutation_proof'):
-            for value in ('', {}, [None]):
-                with self.subTest(field=field, value=value):
-                    reject(lambda p: p['inventory'][0].update({field: value}),
-                           'tier-plan-shape', row_id, field)
-        for section, field in (('smoke_flows', 'must_not_assert'), ('release_full_set', 'smoke_flows'),
-                               ('release_full_set', 'human_review_groups'), ('release_full_set', 'configurations'),
-                               ('release_full_set', 'visual_variants'), ('release_full_set', 'additional_review')):
-            reject(lambda p: p[section][0].update({field: ''}), 'tier-plan-shape', field)
-        for field in ('devices', 'screenshots', 'recordings', 'look_for'):
-            reject(lambda p: p['weekly_human_review']['groups'][0].update({field: {}}),
-                   'tier-plan-shape', field)
-        for index in range(len(plan['smoke_flows'])):
-            with self.subTest(flow=plan['smoke_flows'][index]['id']):
-                reject(lambda p: p['smoke_flows'][index]['source'].update(identifier='different'),
-                       'tier-plan-smoke-source', plan['smoke_flows'][index]['id'], 'different')
-                flow = plan['smoke_flows'][index]
-                alternative = next((key, case) for key, case in context[1].items()
-                                   if all(case[k] == flow[k] for k in ('device', 'configuration', 'fixture'))
-                                   and key != flow['source']['identifier'])
-                reject(lambda p: p['smoke_flows'][index].update(source=dict(
-                    kind='strict', identifier=alternative[0], selector=alternative[1]['selector'])),
-                    'tier-plan-smoke-source', flow['id'], alternative[0])
-        for key, value in (('owner', 'unassigned'), ('escalate_to', 'unassigned')):
-            reject(lambda p: p['weekly_human_review'].update({key: value}), 'tier-plan-human-review', key)
-        reject(lambda p: p['release_full_set'][0].update(owner='unassigned'), 'tier-plan-release', 'owner')
-        pr_smoke = context[3]
-        for identifier in pr_smoke:
-            reject(lambda p: next(r for r in p['inventory'] if r['identifier'] == identifier).update(target_home='unit'),
-                   'tier-plan-pr-smoke', identifier, 'pr-smoke')
-            reject(lambda p: p['inventory'].remove(next(r for r in p['inventory'] if r['identifier'] == identifier)),
-                   'tier-plan-pr-smoke', identifier, 'missing')
-
-        changed = copy.deepcopy(plan)
-        changed['inventory'][0].pop('status')
-        changed['inventory'][1]['replacement_tests'] = ['MissingTests/second row']
-        errors = conv.validate_test_tier_plan(changed, *context)
-        self.assertTrue(any(row_id in e and 'status' in e for e in errors), errors)
-        self.assertTrue(any(changed['inventory'][1]['identifier'] in e and 'MissingTests/second row' in e
-                            for e in errors), errors)
-
-        changed = copy.deepcopy(plan)
-        row_index = next(i for i, r in enumerate(changed['inventory']) if r['identifier'] == ipad_id)
-        row = changed['inventory'][row_index]
-        row['target_home'] = 'unit'
-        row['human_review_groups'] = []
-        row['smoke_flows'] = ['ipad-first-boot']
-        changed['smoke_flows'][0]['must_not_assert'].append('extra-exclusion')
-        self.assertEqual([], conv.validate_test_tier_plan(changed, *context))
-        del row['human_review_groups']
-        self.assertEqual([], conv.validate_test_tier_plan(changed, *context))
-        row['status'] = 'covered'
-        row['mutation_proof'] = [dict(pr='https://github.com/sudoHG/immichSlides/pull/719', test=test,
-                                     mutation='Ignore the input rule', failed_then_passed_on=['ios', 'tvos'])
-                                 for test in row['replacement_tests']]
-        self.assertEqual([], conv.validate_test_tier_plan(changed, *context))
-        for field in ('pr', 'test', 'mutation', 'failed_then_passed_on'):
-            bad = copy.deepcopy(changed)
-            bad['inventory'][row_index]['mutation_proof'][0].pop(field)
-            self.assertTrue(any('mutation_proof' in e and field in e
-                                for e in conv.validate_test_tier_plan(bad, *context)))
-        for field, value in (('pr', 'unreviewed'), ('test', 'MissingTests/unknown'),
-                             ('mutation', ''), ('failed_then_passed_on', ['ios'])):
-            bad = copy.deepcopy(changed)
-            bad['inventory'][row_index]['mutation_proof'][0][field] = value
-            self.assertTrue(any(e.startswith('tier-plan-coverage:') and 'mutation_proof' in e
-                                for e in conv.validate_test_tier_plan(bad, *context)))
-        for replacements, proofs in ((row['replacement_tests'], []), ([], row['mutation_proof']),
-                                     (['MissingTests/unknown'], row['mutation_proof'])):
-            bad = copy.deepcopy(changed)
-            bad['inventory'][row_index].update(replacement_tests=replacements, mutation_proof=proofs)
-            self.assertTrue(any(e.startswith('tier-plan-coverage:') for e in
-                                conv.validate_test_tier_plan(bad, *context)))
-
-    def test_target_tier_replacements_and_mutation_receipts_match_compiled_platforms(self):
-        plan = json.loads((REPO_ROOT / conv.TEST_TIER_PLAN_PATH).read_text())
-        context = conv.test_tier_context(REPO_ROOT)
-        tv_test = 'ServerConfigFormTVOSTests/plain text field commits final value to binding on end editing'
-        ios_test = 'FilterSummaryNavigationIdentityIOSTests/album and people entries use distinct stable identifiers'
-        shared_test = 'AppFlowStateMachineTests/app initial route goes straight to playback when configured, else to first boot'
-        tv_id = 'tvos-n1-cold|normal|tv|Debug|a'
-        shared_id = next(key for key, platforms in context[0].items() if set(platforms) == {'ios', 'tvos'})
-        for identifier, replacement, receipt_platforms, expected_rule, detail in (
-                (tv_id, tv_test, ['tvos'], None, None),
-                (plan['inventory'][0]['identifier'], tv_test, ['tvos'], 'tier-plan-replacement', 'ios'),
-                (shared_id, tv_test, ['tvos'], 'tier-plan-replacement', 'ios'),
-                (tv_id, ios_test, ['ios'], 'tier-plan-replacement', 'tvos'),
-                (tv_id, tv_test, ['ios', 'tvos'], 'tier-plan-coverage', 'failed_then_passed_on'),
-                (tv_id, shared_test, ['tvos'], 'tier-plan-coverage', 'failed_then_passed_on'),
-                (tv_id, shared_test, ['ios', 'tvos'], None, None)):
-            with self.subTest(identifier=identifier, replacement=replacement, platforms=receipt_platforms):
-                changed = copy.deepcopy(plan)
-                row = next(r for r in changed['inventory'] if r['identifier'] == identifier)
-                row.update(status='covered', replacement_tests=[replacement], mutation_proof=[dict(
-                    pr='https://github.com/sudoHG/immichSlides/pull/718', test=replacement,
-                    mutation='Ignore the input rule', failed_then_passed_on=receipt_platforms)])
-                errors = conv.validate_test_tier_plan(changed, *context)
-                if expected_rule is None:
-                    self.assertEqual([], errors)
-                else:
-                    self.assertTrue(any(e.startswith(expected_rule + ':') and identifier in e
-                                        and replacement in e and detail in e for e in errors), errors)
-                    if expected_rule == 'tier-plan-replacement':
-                        self.assertTrue(any(e.startswith('tier-plan-coverage:') and identifier in e for e in errors), errors)
-                        row['status'] = 'pending'
-                        self.assertTrue(any(e.startswith('tier-plan-replacement:') and identifier in e
-                                            and replacement in e and detail in e for e in
-                                            conv.validate_test_tier_plan(changed, *context)))
-
-    def test_target_tier_context_reads_nested_sources_and_reports_invalid_inputs(self):
-        from strict_e2e_runner_support import CommandError
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for folder in ('scripts', 'immichSlidesUITests/Nested', 'immichSlidesTests/Nested'):
-                (root / folder).mkdir(parents=True)
-            (root / 'scripts/nightly-matrix.json').write_text('{"cases": []}')
-            areas = dict(schema_version=1, revision='test-areas', smoke=['RootUITests/testRoot',
-                         'NestedUITests/testNestedScreenshot'], functional_smoke=['NestedUITests/testNested'], areas={
-                             'core': dict(sources=['immichSlides/Shared/**'], tests=['RootUITests']),
-                             'feature': dict(sources=['immichSlides/iOS/**'], tests=['NestedUITests'])})
-            (root / 'scripts/ci-ui-areas.json').write_text(json.dumps(areas))
-            (root / 'immichSlidesUITests/Flow.swift').write_text('class RootUITests: XCTestCase { func testRoot() {} }')
-            (root / 'immichSlidesUITests/Nested/Flow.swift').write_text('class NestedUITests: XCTestCase { func testNested() {} }')
-            (root / 'immichSlidesTests/Rule.swift').write_text('struct RootTests { @Test func `root rule`() {} }')
-            (root / 'immichSlidesTests/Nested/Rule.swift').write_text(
-                '#if os(tvOS)\nstruct NestedTests { @Test func `nested rule`() {} }\n#endif')
-            ui, _, units, pr_smoke = conv.test_tier_context(root)
-            self.assertEqual({'RootUITests/testRoot', 'NestedUITests/testNested'}, set(ui))
-            self.assertEqual({'ios': {'RootTests/root rule'},
-                              'tvos': {'RootTests/root rule', 'NestedTests/nested rule'}}, units)
-            self.assertEqual({'NestedUITests/testNested'}, pr_smoke)
-            del areas['functional_smoke']
-            (root / 'scripts/ci-ui-areas.json').write_text(json.dumps(areas))
-            self.assertEqual({'RootUITests/testRoot'}, conv.test_tier_context(root)[3])
-            areas['smoke'].append(areas['smoke'][0])
-            (root / 'scripts/ci-ui-areas.json').write_text(json.dumps(areas))
-            with self.assertRaisesRegex(ValueError, 'duplicate UI area selector'):
-                conv.test_tier_context(root)
-            areas['smoke'].pop()
-            (root / 'scripts/ci-ui-areas.json').write_text(json.dumps(areas))
-            plan = json.loads((REPO_ROOT / conv.TEST_TIER_PLAN_PATH).read_text())
-            (root / conv.TEST_TIER_PLAN_PATH).write_text(json.dumps(plan))
-            with patch('run_strict_e2e.resolve_suite_selector', side_effect=CommandError('unknown suite')):
-                (root / 'scripts/nightly-matrix.json').write_text(json.dumps({'cases': [dict(
-                    suite='unknown', scenario='normal', device='iphone', configuration='Debug', fixture='a', platform='ios')]}))
-                errors = conv.check_test_tier_plan(root)
-                self.assertEqual(['tier-plan-input'], rules(errors))
-                self.assertIn('unknown suite', errors[0].detail)
-                self.assertIn('unknown|normal|iphone|Debug|a', errors[0].detail)
-            with patch.object(conv, 'test_tier_context', side_effect=CommandError('context failure')):
-                errors = conv.check_test_tier_plan(root)
-                self.assertEqual(['tier-plan-input'], rules(errors))
-                self.assertIn('context failure', errors[0].detail)
-            with patch('run_strict_e2e.resolve_suite_selector', return_value='malformed'):
-                errors = conv.check_test_tier_plan(root)
-                self.assertEqual(['tier-plan-input'], rules(errors))
-                self.assertIn('malformed', errors[0].detail)
-            (root / conv.TEST_TIER_PLAN_PATH).write_text(
-                '{"inventory":[{"identifier":"offending-row","status":"covered","status":"pending"}]}')
-            errors = conv.check_test_tier_plan(root)
-            self.assertEqual(['tier-plan-input'], rules(errors))
-            self.assertIn('duplicate', errors[0].detail)
-            self.assertIn('status', errors[0].detail)
-            self.assertIn('offending-row', errors[0].detail)
 
     def test_every_direct_ui_case_forwards_the_first_failure_before_xctest(self):
         import tempfile

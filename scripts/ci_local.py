@@ -23,8 +23,6 @@ PATH_OPTIONS = {"--output-dir", "--evidence-dir", "--derived-data-path", "--resu
                 "--cloned-source-packages-path", "--cloned-source-packages", "--xctestrun",
                 "--archive-dir", "--selection-path", "--relocated-path", "--shard-manifest", "--plan", "--records-dir",
                 "--manifest", "--ui-record", "--diagnostics-receipt", "--preparation-diagnostics"}
-# Subcommands (by entry point) that only check results an earlier run wrote and so keep that run's receipt.
-RESULT_CHECK_COMMANDS = {"ci_ui_tests.py": "check-upload"}
 PATH_ALIASES = {"--derived-data": "--derived-data-path", "--result-bundle": "--result-bundle-path"}
 INTERRUPT_GRACE_SECONDS = 150
 # Under heavy host load ps itself can take tens of seconds; a slow probe is not a verdict on the child.
@@ -396,9 +394,7 @@ def launch(script, arguments):
     output = Path(output_value) if output_value else None
     if output and (output == root or root in output.parents):
         raise ValueError("output/evidence directory must be outside the source checkout")
-    if remaining[:1] == [RESULT_CHECK_COMMANDS.get(script.name)]:
-        record_path = None
-    elif record_path is None and output:
+    if record_path is None and output:
         record_path = output / "local-snapshot.json"
     if record_path and (record_path == root or root in record_path.parents):
         raise ValueError("snapshot record must be outside the source checkout")

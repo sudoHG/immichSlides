@@ -11,9 +11,7 @@ import re
 from datetime import date
 from pathlib import PurePosixPath
 
-from ci_summary import (ContractError, NON_INFRASTRUCTURE_DIAGNOSTICS, decode, fields, identity_key, integer, parse_identity,
-                        parse_summary, require, sha, string, validate_test_identity)
-from ci_population import removed_tests
+from ci_summary import ContractError, NON_INFRASTRUCTURE_DIAGNOSTICS, decode, fields, identity_key, parse_summary, require, string, validate_test_identity
 
 
 def parse_policy(raw):
@@ -94,13 +92,6 @@ def classify_changes(paths, policy, *, build_target_paths):
             "affected_paths": sorted(set(affected)), "ci_paths": sorted(set(trusted))}
 
 
-def select_policy(base_policy, candidate_policy, admission_identity, approved_head):
-    admission = parse_identity(admission_identity)
-    base = parse_policy(base_policy)
-    approved = admission["event"] == "pull_request" and approved_head == admission["head_sha"]
-    return (parse_policy(candidate_policy), True) if approved and candidate_policy is not None else (base, False)
-
-
 def function_identity(identity):
     # Only Swift Testing parameters expand a statically declared function.
     if identity["kind"] == "swift":
@@ -152,22 +143,18 @@ def expected_skip_verdict(entry, rules, *, tier, environment):
     return False, None
 
 
-def evaluate_population(raw, expected, policy, *, environment, base_registry=None, evaluated_on=None):
+def evaluate_population(raw, expected, policy, *, environment):
     """Compare one producer's declared, compiled and executed populations.
 
     Proposed exceptions stay inactive. All discrepancies are retained by identity.
     A legacy unverified result can pass only when matching skips explain it fully.
     Deselections never excuse a missing compiled declaration.
     """
-    result = {"status": "failed", "errors": [], "expected_skips": [], "deselected": [], "flaky_passed": [],
+    result = {"status": "failed", "errors": [], "expected_skips": [], "deselected": [],
               "missing_compiled": [], "missing_executed": []}
     try:
         summary = parse_summary(raw)
         policy = parse_policy(policy)
-        from ci_flaky import ASSERTION_FAILURE, eligible_entry, parse_registry
-        require(base_registry is None or type(evaluated_on) is date,
-                "base_registry requires the trusted producer evaluation date")
-        registry = parse_registry(base_registry) if base_registry is not None else {"schema_version": 1, "entries": []}
         expected_by_function = tokens(expected, functions=True)
         tokens(expected)
         require(bool(expected_by_function), "empty expected population")
@@ -176,9 +163,6 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
         compiled = tokens(population["compiled"])
         compiled_functions = tokens(population["compiled"], functions=True)
         observed = {identity_key(entry["identity"]): entry for entry in population["observed"]}
-        yellow = [entry["identity"] for entry in population["observed"]
-                  if entry.get("environment_limit", {}).get("policy_version") == 5]
-        flaky = [entry["identity"] for entry in population["observed"] if "nightly_retry" in entry]
         deselected = {identity_key(entry["identity"]): entry for entry in population["deselected"]}
         tier = summary["run"]["tier"]
         approved = tier_approved(policy, tier)
@@ -225,145 +209,14 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
                 errors.append(skip_error)
             elif expected_skip:
                 result["expected_skips"].append(identity)
-            elif "nightly_retry" in entry:
-                pass  # parse_summary has validated the hosted nightly's one-retry claim.
-            elif (entry["outcome"] == "flaky-passed" and entry["attempts"][0]["exit_code"] == 65
-                  and entry["attempts"][0]["reason"] == ASSERTION_FAILURE
-                  and entry["attempts"][1]["exit_code"] == 0 and eligible_entry(
-                    registry, identity, tier=tier, environment=environment, today=evaluated_on)):
-                result["flaky_passed"].append(identity)
-            elif entry.get("environment_limit", {}).get("policy_version") == 5:
-                pass  # parse_summary has bound the proof to this failed nightly observation.
             elif entry["outcome"] != "passed":
                 errors.append(f"{entry['outcome']}: {label}")
         for entry in summary["infrastructure"]:
             category = NON_INFRASTRUCTURE_DIAGNOSTICS.get(entry["code"], "Infrastructure").lower()
             errors.append(f"{category} {entry['code']}: {entry['message']}")
-        if (summary["status"] == "failed" and not (yellow or flaky)) or (summary["status"] == "unverified" and not result["expected_skips"]):
+        if summary["status"] == "failed" or (summary["status"] == "unverified" and not result["expected_skips"]):
             errors.append(f"producer status is {summary['status']}")
         result["status"] = "failed" if errors else "passed"
-        if yellow:
-            result["environment_limited"] = yellow
-        if flaky:
-            result["flaky"] = flaky
-        if yellow or flaky:
-            if not errors:
-                result["status"] = "environment-limited"
-    except (ContractError, TypeError, KeyError, ValueError) as error:
-        result["errors"].append(f"invalid evidence: {error}")
-    return result
-
-
-def job_key(job):
-    return (job["tier"], job["job"], job["shard"])
-
-
-def admitted_population(record, tree_sha):
-    fields(record, {"tree_sha", "identities"}, "expected population")
-    sha(record["tree_sha"])
-    require(record["tree_sha"] == tree_sha, "expected population differs from admitted tree SHA")
-    require(isinstance(record["identities"], list), "expected population identities must be an array")
-    tokens(record["identities"])
-    return record["identities"]
-
-
-def evaluate_gate(summaries, *, expected, admission_identity, required_jobs, base_policy,
-                  environment, candidate_policy=None, approved_head=None, fork_originated=None,
-                  ci_changing=None, app_affected=None, context="gate", base_population=None,
-                  base_registry=None, evaluated_on=None,
-                  allowed_events=("pull_request", "push")):
-    """Evaluate admitted summaries using trusted inputs; publishing belongs elsewhere.
-
-    required_jobs describe tier/job/shard, run_id/attempt, supported workflow_paths
-    and independently derived expected records {tree_sha, identities} for each job.
-    The caller independently verifies each job's status/conclusion; artifacts
-    cannot establish that the uploading job ultimately completed successfully.
-    Overall and per-job expected records must name admission_identity's tree_sha.
-    For PRs admission_identity names the admitted merge/base/head/tree, not current main.
-    base_population is a required PR record {base_sha, identities} from that base.
-    No summary is used to determine classification, approval, provenance or policy.
-    """
-    result = {"status": "failed", "errors": [], "approval_based": False, "self_reported": fork_originated,
-              "source": admission_identity, "expected_skips": [], "deselected": [], "removed_by_pr": [], "flaky_passed": []}
-    try:
-        admission = parse_identity(admission_identity)
-        expected = admitted_population(expected, admission["tree_sha"])
-        require(admission["event"] in allowed_events, "event is not admitted by this consumer")
-        require(admission["event"] != "local" or not admission["dirty"], "dirty local identity cannot prove the tested tree")
-        require(type(fork_originated) is bool and type(ci_changing) is bool and type(app_affected) is bool,
-                "trusted classification must be explicit booleans")
-        require(context in {"gate", "ui"}, "unsupported verdict context")
-        approved = admission["event"] == "pull_request" and approved_head == admission["head_sha"]
-        if (fork_originated or ci_changing) and admission["event"] == "pull_request" and not approved:
-            result["errors"].append("exact PR head approval is required")
-        elif fork_originated and admission["event"] != "pull_request":
-            result["errors"].append("fork source requires a PR admission")
-        elif ci_changing and admission["event"] == "local":
-            result["errors"].append("local evaluation cannot authorize CI changes")
-        policy, candidate_selected = select_policy(base_policy, candidate_policy, admission, approved_head)
-        result["approval_based"] = approved and (fork_originated or ci_changing or candidate_selected)
-        result["removed_by_pr"] = (removed_tests(base_population, expected, base_sha=admission["base_sha"])
-                                   if admission["event"] == "pull_request" else [])
-        jobs = {}
-        not_applicable = []
-        for job in required_jobs:
-            fields(job, {"tier", "job", "shard", "run_id", "attempt", "workflow_paths", "expected",
-                         "status", "conclusion"}, "required job")
-            skipped = (context == "gate" and admission["event"] == "pull_request"
-                       and not app_affected and not ci_changing and job["status"] == "completed"
-                       and job["conclusion"] == "skipped" and job["tier"] in {"build", "unit"}
-                       and job["shard"] in {"ios", "tvos"}
-                       and job["job"] == job["tier"] + "-" + job["shard"])
-            require(skipped or (job["status"] == "completed" and job["conclusion"] == "success"),
-                    "required job did not complete successfully: " + str(job_key(job)))
-            integer(job["attempt"], 1, "required attempt")
-            require(isinstance(job["workflow_paths"], list) and bool(job["workflow_paths"]), "supported workflow paths required")
-            require(job_key(job) not in jobs, "duplicate required job")
-            job_expected = admitted_population(job["expected"], admission["tree_sha"])
-            jobs[job_key(job)] = dict(job, expected=job_expected)
-            if skipped:
-                not_applicable.append({"tier": job["tier"], "job": job["job"], "shard": job["shard"],
-                                       "identities": job_expected})
-        if context == "ui" and not app_affected:
-            require(not ci_changing, "CI-trusted changes cannot be not applicable")
-            result["status"] = "failed" if result["errors"] else "not-applicable"
-            return result
-        require(bool(jobs), "required job set is empty")
-        scheduled = [identity for job in jobs.values() for identity in job["expected"]]
-        require(set(tokens(scheduled, functions=True)) == set(tokens(expected, functions=True)),
-                "required-job population differs from tested tree")
-        skipped_keys = {job_key(job) for job in not_applicable}
-        jobs = {key: job for key, job in jobs.items() if key not in skipped_keys}
-        require(bool(jobs), "app-unaffected gate still requires executed checks")
-        executed_expected = [identity for job in jobs.values() for identity in job["expected"]]
-        parsed = [parse_summary(raw) for raw in summaries]
-        seen, declared, compiled = set(), [], []
-        for summary in parsed:
-            key = job_key(summary["run"])
-            require(key in jobs and key not in seen, "unexpected or duplicate job artifact")
-            seen.add(key)
-            job = jobs[key]
-            require(summary["identity"] == admission, "producer differs from admitted identity (base moved or wrong tree)")
-            require(summary["source"]["workflow_path"] in job["workflow_paths"], "unsupported workflow path")
-            require(summary["source"]["fork_originated"] == fork_originated, "fork source mismatch")
-            require(summary["run"]["id"] == job["run_id"] and summary["run"]["attempt"] == job["attempt"], "wrong run or attempt")
-            population = summary["population"]
-            coverage = evaluate_population(summary, job["expected"], policy, environment=environment,
-                                           base_registry=base_registry, evaluated_on=evaluated_on)
-            result["errors"].extend(coverage["errors"])
-            result["expected_skips"].extend(coverage["expected_skips"])
-            result["deselected"].extend(coverage["deselected"])
-            result["flaky_passed"].extend(coverage["flaky_passed"])
-            declared.extend(population["declared"])
-            compiled.extend(population["compiled"])
-        require(seen == set(jobs), "missing required job/artifact (failed or cancelled job)")
-        require(set(tokens(declared, functions=True)) == set(tokens(executed_expected, functions=True)), "aggregate declared population differs from tested tree")
-        require(set(tokens(compiled, functions=True)) == set(tokens(executed_expected, functions=True)), "aggregate compiled population differs from tested tree")
-        # Repeated compiled identities in separate device shards are legitimate; each
-        # shard still has to account for every one of its own compiled identities.
-        result["status"] = "failed" if result["errors"] else "passed"
-        if not_applicable:
-            result["not_applicable"] = not_applicable
     except (ContractError, TypeError, KeyError, ValueError) as error:
         result["errors"].append(f"invalid evidence: {error}")
     return result

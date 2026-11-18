@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass
 import functools
 import json
@@ -13,6 +14,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import time
 from typing import Callable, TextIO
 from xml.etree import ElementTree
 
@@ -52,6 +54,22 @@ OFFLINE_SUITES = {
     "access-lifecycle": ACCESS_LIFECYCLE_HOST_SELECTORS,
 }
 
+
+@contextmanager
+def official_result_step(phase):
+    """Annotate timeouts without changing subprocess execution or cleanup."""
+    # Policy-only base readers may not carry this optional diagnostic module.
+    from ci_bounded_diagnostics import MAX_DIAGNOSTIC_SECONDS
+    phase = phase if phase in {"export", "tests-read", "summary-read", "legacy-read", "details-read", "attachments-export"} else "unknown"
+    started = time.monotonic()
+    try:
+        yield
+    except subprocess.TimeoutExpired as error:
+        elapsed = time.monotonic() - started
+        measurement = f"{elapsed:.3f}" if 0 <= elapsed <= MAX_DIAGNOSTIC_SECONDS else "unavailable"
+        error.entry = {"code": "xcresult-export-timeout", "message":
+                       f"Official result export exceeded its budget; phase={phase}; elapsed_seconds={measurement}"}
+        raise
 
 class CommandError(Exception):
     def __init__(self, message: str, code: int = 2) -> None:
@@ -447,7 +465,7 @@ def format_test_results_summary(
 
 
 def read_official_test_results_summary(bundle_path: Path, *, timeout_seconds: float | None = None) -> TestResultsSummary:
-    from ci_flaky import official_result_step
+    # official_result_step is owned by this exporter.
     if not bundle_path.exists():
         raise CommandError(
             f"The test command succeeded, but this run's separate xcresult does not exist: {bundle_path}. Missing results cannot be treated as a pass."

@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
-"""Start the public controlled service and run one strict E2E suite without injecting state into the app."""
+"""Shared smoke fixture, simulator readiness and bounded process cleanup primitives."""
 
 from __future__ import annotations
 
-import argparse
-import hashlib
 import json
 import math
 import os
 import re
-import shlex
-import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
@@ -21,70 +16,26 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Callable, Mapping, Sequence, TextIO
+from typing import Callable, Mapping, Sequence
 
 from ci_execution_diagnostics import active
 
-from run_offline_unit_tests import (
-    CommandError as OfflineCommandError,
-    TestResultsSummary,
-    parse_non_negative_int,
-    read_official_test_results_summary,
-)
-from album_server_narrow_contract import (
-    AlbumServerContractError,
-    evaluate_album_empty_evidence,
-)
-from strict_e2e_filter_contract import (
-    FILTER_VISUAL_SUITES,
-    FilterContractError,
-    evaluate_filter_visual_identity,
-    write_member_manifest,
-)
-from strict_e2e_out_of_order_contract import (
-    OUT_OF_ORDER_VISUAL_SUITES,
-    OutOfOrderContractError,
-    audit_runner_inputs,
-    evaluate_out_of_order_identity,
-)
-from strict_e2e_p2_contract import (
-    P2_CASES,
-    RECORDING_FILE,
-    RECORDING_TIMING_FILE,
-    P2ContractError,
-    p2_selector,
-    read_xcresult_facts,
-    require_official_execution,
-    validate_raw_evidence,
-)
-from strict_e2e_photo_identity import (
-    IdentityAssertionError,
-    VISUAL_SUITES,
-    evaluate_visual_identity,
-)
-from access_lifecycle_contract import logical_bytes_contain
-from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
-from ci_flaky import SERVER_SWITCH_RECORDING_SUITES
+from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest, write_member_manifest
+import ctypes
+import queue
+from threading import Event, Thread
+from ci_bounded_diagnostics import MAX_LOAD_AVERAGE, RESOURCE_CATEGORIES
+from ci_execution_diagnostics import finite
+from ci_bounded_diagnostics import (MAX_PROCESSES, public_runner_process_name, render_runner_group_members, validate_runner_group_members)
+from ci_execution_diagnostics import TRUNCATION_PREFIX, TRUNCATION_REASONS, report_truncation
+from run_host_checks import GROUP_TERM_GRACE_SECONDS, group_has_live_members, stop_group
 
 
-EXAMPLE_XCCONFIG = Path("Config/env.example.xcconfig")
-TASK_XCCONFIG = Path("Config/env.xcconfig")
 MIN_DATA_GIB = 80
-IOS_LIFECYCLE_PAUSE_SUITE = "ios-lifecycle-pause"
 # xcodebuild timeout for compile plus one UI test. Diagnostic collection is disabled.
 XCODEBUILD_TIMEOUT_SECONDS = 300
 SIMULATOR_RESET_TIMEOUT_SECONDS = 120
 SIMULATOR_COMMAND_TIMEOUT_SECONDS = 60
-# P2 command-channel allowances are infrastructure only; all movie/product windows stay unchanged.
-REDUCE_MOTION_CHANGE_TIMEOUT_SECONDS = 4 * SIMULATOR_COMMAND_TIMEOUT_SECONDS
-REDUCE_MOTION_RESPONSE_TIMEOUT_SECONDS = REDUCE_MOTION_CHANGE_TIMEOUT_SECONDS + SIMULATOR_COMMAND_TIMEOUT_SECONDS
-REDUCE_MOTION_START_TIMEOUT_SECONDS = SIMULATOR_COMMAND_TIMEOUT_SECONDS + REDUCE_MOTION_CHANGE_TIMEOUT_SECONDS
-REDUCE_MOTION_JOIN_TIMEOUT_SECONDS = REDUCE_MOTION_RESPONSE_TIMEOUT_SECONDS
-REDUCE_MOTION_CLOSE_TIMEOUT_SECONDS = REDUCE_MOTION_JOIN_TIMEOUT_SECONDS + REDUCE_MOTION_CHANGE_TIMEOUT_SECONDS
-# Two transitions: response plus independent Home, foreground and App-readout reserves.
-REDUCE_MOTION_XCODE_ALLOWANCE_SECONDS = 2 * (REDUCE_MOTION_RESPONSE_TIMEOUT_SECONDS + 3 * SIMULATOR_COMMAND_TIMEOUT_SECONDS)
-REDUCE_MOTION_CASE_ALLOWANCE_SECONDS = (REDUCE_MOTION_START_TIMEOUT_SECONDS + REDUCE_MOTION_XCODE_ALLOWANCE_SECONDS
-                                       + REDUCE_MOTION_CLOSE_TIMEOUT_SECONDS)
 SIMULATOR_BOOT_TIMEOUT_SECONDS = 600
 SIMULATOR_PREPARATION_TIMEOUT_SECONDS = 600
 SIMULATOR_READINESS_TIMEOUT_SECONDS = 300
@@ -97,14 +48,10 @@ BOOT_SETTLE_MAX_CONSECUTIVE_MISSES = 6
 # Process-local fallback if the job marker is unavailable; the disk marker spans processes.
 _BOOT_SETTLE_ATTEMPTED = False
 SERVICE_STARTUP_TIMEOUT_SECONDS = 60
-# Preserve strict/tracer preparation limits under their existing outer budgets.
+# Fixture preparation has its own bound before service health checks.
 SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS = 120
-# simctl writes Recording started only after processing the first frame; after SIGINT, wait for in-flight frames to write the moov atom.
-RECORDING_START_TIMEOUT_SECONDS = 15
-RECORDING_STOP_TIMEOUT_SECONDS = 30
 WRONG_PUBLIC_API_KEY = "immichslides-public-e2e-wrong-key"
 PRIVATE_RESULT_BUNDLE_ROOT = Path(tempfile.gettempdir()) / "immichSlides-strict-e2e-private"
-RUNNER_SCENARIOS = ("normal", "auth-401", "html-200", "unreachable", "timeout", "out-of-order")
 FORBIDDEN_EXACT_KEYS = {
     "IMMICH_SERVER_URL",
     "IMMICH_API_KEY",
@@ -113,206 +60,15 @@ FORBIDDEN_EXACT_KEYS = {
     "IMMICH_TEST_API_KEY",
 }
 PLATFORM_SETTINGS = {
-    "ios": ("immichSlides-iOS", "StrictE2E-iOS", "testIOSStrictE2EConnectionSmoke"),
-    "tvos": ("immichSlides-tvOS", "StrictE2E-tvOS", "testTVOSStrictE2EConnectionSmoke"),
+    "ios": ("immichSlides-iOS", "StrictE2E-iOS", None),
+    "tvos": ("immichSlides-tvOS", "StrictE2E-tvOS", None),
 }
-IOS_FIRST_BATCH_SUITES = {
-    "journey-a": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests/testFirstBootSetupSurvivesColdRelaunch",
-    "journey-b": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests/testRandomModeReachesPlaybackWithCorrectControlState",
-    "firstboot-failure": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests/testFirstBootFailureStaysOnFirstBoot",
-    "pause-window": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests/testSinglePhotoOutgoingPauseWindowCapture",
-    "pause-stage": "immichSlidesUITests/StrictE2EFirstBatchIOSUITests/testRandomPlaybackPauseStageCapture",
-}
-# Run each person rule in a separate xcodebuild; official counts remain 1/0 per run and are combined at suite level.
-FILTER_PERSON_SESSIONS = (
-    {
-        "name": "normal",
-        "selector": "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterPersonNormalMatch",
-        "visual_step": "normal_match",
-    },
-    {
-        "name": "conflict-normal",
-        "selector": "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterPersonConflictNormal",
-        "visual_step": "conflict_normal",
-    },
-    {
-        "name": "nofaces",
-        "selector": "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterPersonNoFaces",
-        "visual_step": "no_faces",
-    },
-)
 
 
-def filter_person_first_attempt_complete(methods):
-    expected = [session["selector"].split("/", 1)[1] for session in FILTER_PERSON_SESSIONS]
-    outcomes = {method["identifier"]: method["result"] for method in methods}
-    return (len(methods) == len(expected) and set(outcomes) == set(expected)
-            and all(outcomes[key] == "Passed" for key in expected[:-1]))
-
-
-IOS_FILTER_SUITES = {
-    "display-policy": "immichSlidesUITests/StrictE2EFilterIOSUITests/testSmartFillDisplayPolicyChangesMultiToSingle",
-    "filter-album": "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterAlbumTargetMembers",
-    "filter-edit-switch": "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterEditSwitchKeepsFilteredModeAndClearReturnsRandom",
-    "filter-empty": "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterEmptySelectionCannotStart",
-    "filter-person": FILTER_PERSON_SESSIONS[0]["selector"],
-    "filter-switch": "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterServerSwitchIsolation",
-    "filter-vision": "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterVisionSoloOnlyOnDevice",
-    "filter-person-return": "immichSlidesUITests/StrictE2EFilterIOSUITests/testPersonSelectionStaysOnPersonPageAndReturnsToSummary",
-    "filter-person-solo-persist": "immichSlidesUITests/StrictE2EFilterIOSUITests/testPersonSoloOnlyTogglePersistsAcrossReturn",
-    "album-empty": "immichSlidesUITests/StrictE2EFilterIOSUITests/testTargetAlbumPlaysAndEmptyAlbumShowsEmptyResult",
-}
-TVOS_FLOW_SUITES = {
-    "tvos-flow": "immichSlidesUITests/StrictE2ETVOSFlowUITests/testTVOSFirstBootModeSelectionAndCorePlayback",
-    "tvos-n1-cold": "immichSlidesUITests/StrictE2ETVOSFlowUITests/testTVOSFirstBootSaveAndConfiguredColdLaunch",
-    "tvos-firstboot-failure": "immichSlidesUITests/StrictE2ETVOSFlowUITests/testTVOSAlbumServerFirstBootFailureHTML200",
-}
-# The directional-wake check lives in the tvOS visual test class and only needs the standard strict inputs.
-TVOS_CONTROL_SUITES = {
-    "tvos-directional-wake": "immichSlidesUITests/FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarCanWakeByAnyDirectionalPress",
-}
-TVOS_FILTER_SUITES = {
-    "tvos-album": "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSTargetAlbumPlaybackAndEmptyStart",
-    "tvos-display-policy": "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSSmartFillDisplayPolicyChangesMultiToSingle",
-    "tvos-edit-switch": "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSFilterEditSwitchKeepsFilteredModeAndClearReturnsRandom",
-    "tvos-person": "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSPersonRules",
-    "tvos-switch": "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSServerSwitchIsolation",
-    "tvos-album-empty": "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSTargetAlbumPlaysAndEmptyAlbumShowsEmptyResult",
-}
-IOS_LATE_IMAGE_SUITES = {
-    "late-image": "immichSlidesUITests/StrictE2ELateImageIOSUITests/testLateImageKeepsCurrentSceneAfterLateRequest",
-}
-TVOS_LATE_IMAGE_SUITES = {
-    "late-image": "immichSlidesUITests/StrictE2ELateImageTVOSUITests/testTVOSLateImageDoesNotFlashBack",
-}
-IOS_CASES = {
-    "settings": "immichSlidesUITests/AccessLifecycleIOSUITests/testSettingsPersistAfterTerminateLaunch",
-    "pause": "immichSlidesUITests/AccessLifecycleIOSUITests/testPauseNextContinueVisibleTiming",
-    "background": "immichSlidesUITests/AccessLifecycleIOSUITests/testBackgroundReturnPreservesScene",
-    "first-wake": "immichSlidesUITests/AccessLifecycleIOSUITests/testFirstWakeRequiresHiddenControlsAndPreservesVisibleScene",
-}
-TVOS_CASES = {
-    "settings": "immichSlidesUITests/AccessLifecycleTVOSUITests/testTVOSSettingsPersistAfterTerminateLaunch",
-    "pause": "immichSlidesUITests/AccessLifecycleTVOSUITests/testTVOSPauseNextContinueVisibleTiming",
-    "background": "immichSlidesUITests/AccessLifecycleTVOSUITests/testTVOSBackgroundReturnPreservesScene",
-}
-LIFECYCLE_SUITES = {
-    f"{platform}-lifecycle-{case}": (platform, selector)
-    for platform, cases in (("ios", IOS_CASES), ("tvos", TVOS_CASES))
-    for case, selector in cases.items()
-}
-TIMELINE_LIFECYCLE_SUITES = {
-    "ios-lifecycle-pause-timeline": (
-        "ios", "immichSlidesUITests/AccessLifecycleIOSUITests/testPauseNextContinueAppTimeline"),
-    "tvos-lifecycle-pause-timeline": (
-        "tvos", "immichSlidesUITests/AccessLifecycleTVOSUITests/testTVOSPauseNextContinueAppTimeline"),
-}
-LIFECYCLE_SUITES.update(TIMELINE_LIFECYCLE_SUITES)
-IMAGE_FAILURE_RECOVERY_SUITES = {
-    "image-failure-recovery": ("ios", "immichSlidesUITests/ScenePresentationContractUITests/testIOSImageFailureRecovery"),
-}
-RUNNER_SUITES = (
-    "smoke",
-    *LIFECYCLE_SUITES,
-    *IMAGE_FAILURE_RECOVERY_SUITES,
-    *IOS_FIRST_BATCH_SUITES,
-    *IOS_FILTER_SUITES,
-    *TVOS_FLOW_SUITES,
-    *TVOS_CONTROL_SUITES,
-    *TVOS_FILTER_SUITES,
-    *IOS_LATE_IMAGE_SUITES,
-    *TVOS_LATE_IMAGE_SUITES,
-    *P2_CASES,
-)
-FAILURE_SCENARIOS = ("auth-401", "html-200", "unreachable", "timeout")
-SUCCESS_SUITES = (
-    "smoke",
-    *LIFECYCLE_SUITES,
-    *IMAGE_FAILURE_RECOVERY_SUITES,
-    "journey-a",
-    "journey-b",
-    "pause-window",
-    "pause-stage",
-    "tvos-flow",
-    "tvos-directional-wake",
-    *IOS_FILTER_SUITES,
-    "tvos-album",
-    "tvos-display-policy",
-    "tvos-edit-switch",
-    "tvos-person",
-    "tvos-switch",
-    "album-empty",
-    "tvos-n1-cold",
-    "tvos-album-empty",
-    *P2_CASES,
-)
-DUAL_SERVER_SUITES = ("filter-switch", "tvos-switch")
-ALBUM_EMPTY_SUITES = ("album-empty", "tvos-album-empty")
-DISPLAY_POLICY_SUITES = ("display-policy", "tvos-display-policy")
-# The test selects fixture A ids and the Python evaluator checks marks against fixture A.
-FIXTURE_A_ONLY_FILTER_SUITES = ("tvos-album",)
-SETTINGS_RESUME_SUITES = (
-    *(suite for suite in LIFECYCLE_SUITES if suite not in TIMELINE_LIFECYCLE_SUITES),
-    "display-policy",
-    "filter-edit-switch",
-    "filter-switch",
-    "tvos-display-policy",
-    "tvos-edit-switch",
-    "tvos-switch",
-)
-# Manifest IDs written into case-manifest.json. Each ID names coverage already
-# implemented by the mapped XCTest selector; they are not a separate spec.
-# E2E-P0-01: first-boot server setup (journey-a/b, firstboot-failure).
-# E2E-P0-02: first-boot setup survives cold relaunch (journey-a).
-# E2E-P0-03: random/core playback reached (journey-b, tvos-flow).
-# E2E-P0-04: album filter members, empty album, or album edit-switch.
-# E2E-P0-05: person filter rules, including vision soloOnly.
-# E2E-P0-06: server-switch isolation.
-# E2E-P0-07: late image keeps the current scene.
-# E2E-P0-08 / E2E-P0-09: playback control state on journey-b and tvos-flow.
-# N1: tvOS first-boot save and configured cold launch.
-CASE_E2E_IDS = {
-    **{suite: ["image-failure-recovery"] for suite in IMAGE_FAILURE_RECOVERY_SUITES},
-    **{suite: [f"access-lifecycle-{suite}"] for suite in LIFECYCLE_SUITES},
-    "smoke": ["connection-smoke"],
-    "journey-a": ["E2E-P0-01", "E2E-P0-02"],
-    "journey-b": ["E2E-P0-01", "E2E-P0-03", "E2E-P0-08", "E2E-P0-09"],
-    "firstboot-failure": ["E2E-P0-01"],
-    "pause-window": [],
-    "pause-stage": [],
-    "tvos-flow": ["E2E-P0-03", "E2E-P0-08", "E2E-P0-09"],
-    "display-policy": ["display-policy"],
-    "filter-album": ["E2E-P0-04"],
-    "filter-edit-switch": ["E2E-P0-04"],
-    "filter-empty": ["E2E-P0-04"],
-    "filter-person": ["E2E-P0-05"],
-    "filter-switch": ["E2E-P0-06", "server-switch"],
-    "filter-vision": ["E2E-P0-05"],
-    "tvos-album": ["E2E-P0-04"],
-    "tvos-display-policy": ["display-policy"],
-    "tvos-edit-switch": ["E2E-P0-04"],
-    "tvos-person": ["E2E-P0-05"],
-    "tvos-switch": ["E2E-P0-06", "server-switch"],
-    "album-empty": ["album-empty"],
-    "tvos-n1-cold": ["N1"],
-    "tvos-album-empty": ["album-empty"],
-    "tvos-firstboot-failure": ["fail-html-200"],
-    "late-image": ["E2E-P0-07"],
-    **{suite: list(case.e2e_ids) for suite, case in P2_CASES.items()},
-}
 class CommandError(Exception):
     def __init__(self, message: str, code: int = 2) -> None:
         super().__init__(message)
         self.code = code
-
-
-POST_TEST_PHASE_PREFIX = "strict-post-test: "
-POST_TEST_FAILURE_REASONS = {
-    "contract": "Strict post-test evidence validation failed.",
-    "cleanup": "Strict post-test cleanup or official export failed.",
-    "sensitive-scan": "Strict post-test sensitive scan failed.",
-    "private-result-finalization": "Strict private result bundle finalization failed.",
-}
 
 
 class InfrastructureTimeout(CommandError):
@@ -351,92 +107,11 @@ def simulator_command(command: list[str], phase: str, *, deadline: float | None 
     return completed
 
 
-def parse_xcconfig(content: str) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for raw_line in content.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("//") or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
-    return values
-
-
-def prepare_task_xcconfig(example_path: Path, destination_path: Path) -> dict[str, str]:
-    if os.path.lexists(destination_path):
-        raise CommandError("Task env.xcconfig already exists; strict E2E refuses to start to avoid reading or overwriting private configuration.")
-    from ci_local import CONTEXT
-    if os.environ.get(CONTEXT) == str(destination_path.parent.parent.resolve()):
-        # CI-equivalent snapshots use project defaults and explicit fixture runtime inputs.
-        return {"private_configuration_present": False, "ENABLE_DEBUG_AUTO_SERVER": "0",
-                "ENABLE_DEBUG_FILL_APIKEY_BUTTON": "0"}
-    if not example_path.is_file():
-        raise CommandError("The version-controlled env.example.xcconfig is missing.")
-    content = example_path.read_text(encoding="utf-8")
-    values = parse_xcconfig(content)
-    required_flags = ("ENABLE_DEBUG_AUTO_SERVER", "ENABLE_DEBUG_FILL_APIKEY_BUTTON")
-    if any(values.get(key) != "0" for key in required_flags):
-        raise CommandError("Both Debug switches in env.example.xcconfig must be 0.")
-    destination_path.parent.mkdir(parents=True, exist_ok=True)
-    destination_path.write_text(content, encoding="utf-8")
-    copied_values = parse_xcconfig(destination_path.read_text(encoding="utf-8"))
-    if any(copied_values.get(key) != "0" for key in required_flags):
-        destination_path.unlink(missing_ok=True)
-        raise CommandError("Failed to read back task env.xcconfig, or a Debug switch is not 0.")
-    return {
-        "source_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-        **{key: copied_values[key] for key in required_flags},
-    }
-
-
-def cleanup_task_xcconfig(example_path: Path, destination_path: Path) -> None:
-    if not destination_path.exists():
-        return
-    if not example_path.is_file() or destination_path.read_bytes() != example_path.read_bytes():
-        raise CommandError("Task env.xcconfig was modified; keeping the file and stopping to avoid deleting configuration from another run.")
-    destination_path.unlink()
-
-
 def _is_forbidden_key(key: str) -> bool:
     for prefix in ("TEST_RUNNER_", "SIMCTL_CHILD_"):
         if key.startswith(prefix):
             return _is_forbidden_key(key[len(prefix):])
     return key.startswith("UI_TEST_") or key in FORBIDDEN_EXACT_KEYS
-
-
-def strict_app_launch_environment(suite: str | None) -> dict[str, str | None]:
-    """Declare Swift launch keys; None denotes a runner-provided URL or evidence path."""
-    if suite == "p2-reduce-motion":
-        return {"UI_TEST_REDUCE_MOTION_EVIDENCE_DIR": None}
-    if suite == "p2-rotation":
-        return {"UI_TEST_PLAYBACK_INTERVAL_SECONDS": "60"}
-    if suite == "late-image":
-        return {"UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1", "UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT": "1"}
-    if suite in {"filter-person", "tvos-person", "tvos-album-empty"}:
-        return {"UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1", "UI_TEST_PLAYBACK_INTERVAL_SECONDS": "60"}
-    if suite == "tvos-flow":
-        return {"UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1", "UI_TEST_PAUSE_ON_INITIAL_STABLE_SCENE": "1"}
-    if suite in {"album-empty", "filter-album", "journey-b", "ios-lifecycle-first-wake", "p2-ipad-layout"}:
-        return {"UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"}
-    if suite in {"pause-window", "tvos-directional-wake"}:
-        environment = {"UI_TEST_SERVER_URL": None, "UI_TEST_API_KEY": PUBLIC_API_KEY,
-                       "UI_TEST_RESET_STATE": "1", "UI_TEST_FORCE_MODE_SELECTION": "1"}
-        key = "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE" if suite == "pause-window" else "UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"
-        if suite == "pause-window":
-            environment["UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT"] = "1"
-            environment["IMMICHSLIDES_DISABLE_SMART_FILL"] = "1"
-        return {**environment, key: "1"}
-    return {}
-
-
-def write_app_launch_environment_audit(evidence_dir: Path, suite: str) -> None:
-    """Write the static launch declaration, not an observed runtime validation."""
-    environment = strict_app_launch_environment(suite)
-    (evidence_dir / "app-launch-environment-audit.json").write_text(
-        json.dumps({"declaration_kind": "static_swift_launch_keys",
-                    "launch_environment_keys": sorted(environment)}, indent=2) + "\n",
-        encoding="utf-8",
-    )
 
 
 def prepare_evidence_directory(evidence_dir: Path) -> None:
@@ -447,42 +122,6 @@ def prepare_evidence_directory(evidence_dir: Path) -> None:
         json.dumps({"format": 1}, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-
-
-def scenario_settings(scenario: str) -> tuple[str, str, bool]:
-    if scenario not in RUNNER_SCENARIOS:
-        raise CommandError(f"Unknown strict E2E scenario: {scenario}.")
-    if scenario == "auth-401":
-        return "normal", WRONG_PUBLIC_API_KEY, True
-    if scenario == "unreachable":
-        return "normal", PUBLIC_API_KEY, False
-    return scenario, PUBLIC_API_KEY, True
-
-
-def validate_suite_scenario(suite: str, scenario: str) -> None:
-    if suite == "firstboot-failure":
-        if scenario not in FAILURE_SCENARIOS:
-            raise CommandError(f"Invalid combination: --suite {suite} cannot be used with --scenario {scenario}.")
-        return
-    if suite == "tvos-firstboot-failure":
-        if scenario != "html-200":
-            raise CommandError(f"Invalid combination: --suite {suite} cannot be used with --scenario {scenario}.")
-        return
-    if suite == "late-image":
-        if scenario != "out-of-order":
-            raise CommandError(f"Invalid combination: --suite {suite} cannot be used with --scenario {scenario}.")
-        return
-    if suite in SUCCESS_SUITES and scenario != "normal":
-        raise CommandError(f"Invalid combination: --suite {suite} cannot be used with --scenario {scenario}.")
-    if suite not in RUNNER_SUITES:
-        raise CommandError(f"Unknown strict E2E suite: {suite}.")
-    if scenario not in RUNNER_SCENARIOS:
-        raise CommandError(f"Unknown strict E2E scenario: {scenario}.")
-
-
-def validate_suite_fixture(suite: str, fixture_set: str) -> None:
-    if suite in (*DISPLAY_POLICY_SUITES, *LIFECYCLE_SUITES, *FIXTURE_A_ONLY_FILTER_SUITES, *IMAGE_FAILURE_RECOVERY_SUITES) and fixture_set != "a":
-        raise CommandError(f"{suite} must use public fixture A; data from different servers cannot be mixed.")
 
 
 def read_source_sha(repo_root: Path) -> str:
@@ -590,22 +229,6 @@ def wait_for_simulator_service_response(simulator_udid: str, *, report: Callable
         if completed.returncode:
             raise CommandError(f"Simulator LaunchServices registration check failed (exit {completed.returncode}).")
     return _wait_for_simulator_response(query, "simulator-readiness", report=report, deadline=deadline)
-
-
-def simulator_inventory(*, report: Callable[[str], None] | None = None) -> dict:
-    """Apply the existing readiness retry only to timed-out inventory queries."""
-    def query(deadline, timeout):
-        completed = simulator_command(["xcrun", "simctl", "list", "devices", "available", "--json"],
-                                      "simulator-inventory", deadline=deadline, timeout_seconds=timeout)
-        if completed.returncode:
-            raise CommandError(f"Simulator inventory failed (exit {completed.returncode}).")
-        try:
-            return json.loads(completed.stdout)
-        except (TypeError, ValueError) as error:
-            raise CommandError("Simulator inventory returned invalid JSON.") from error
-    inventory, _ = _wait_for_simulator_response(query, "simulator-inventory",
-        report=report or (lambda line: print(line, flush=True)))
-    return inventory
 
 
 def _wait_for_simulator_response(query, phase: str, *, report: Callable[[str], None],
@@ -736,7 +359,6 @@ def _settle_simulator_boot(device: str, deadline: float) -> str:
                 deadline = min(deadline, started + BOOT_SETTLE_TIMEOUT_SECONDS)
                 # The device's manager PID is stable throughout this boot.
                 root = _boot_manager_pid(device, deadline)
-                from strict_e2e_resource_diagnostics import HostProbe
                 # HostProbe bounds each Mach read to 0.2 seconds and abandons stalled workers.
                 probe = HostProbe(device)
                 probe.sample()
@@ -1123,239 +745,251 @@ def stop_exact_process(process: subprocess.Popen[bytes]) -> int:
         except subprocess.TimeoutExpired:
             process.kill()
     return process.wait(timeout=5)
-def audit_out_of_order_runner_inputs(
-    *,
-    fixture_set: str,
-    observed_hash: str,
-    service_log: str,
-    server_url: str,
-) -> dict[str, object]:
-    # Promote input audit failures to runner failures in out-of-order scenarios to avoid silently continuing.
+
+
+HOST_SAMPLE_TIMEOUT_SECONDS = 0.2
+HOST_IDLE_MIN_INTERVAL_SECONDS = 1
+HOST_WALL_BUDGET_SECONDS = 10
+
+
+class HostCpu:
+    """Read actual interval idle ticks; process CPU is ps's short-term estimate."""
+
+    def __init__(self):
+        self.library = None
+        self.host = None
+        self.previous = None
+        self.previous_read_at = None
+        if sys.platform == "darwin":
+            self.library = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+            self.library.mach_host_self.restype = ctypes.c_uint32
+            self.library.host_statistics.argtypes = [ctypes.c_uint32, ctypes.c_int,
+                ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32)]
+            self.host = self.library.mach_host_self()
+
+    def idle(self):
+        if self.library is None:
+            return None
+        ticks = (ctypes.c_uint32 * 4)()
+        count = ctypes.c_uint32(4)
+        if self.library.host_statistics(self.host, 3, ticks, ctypes.byref(count)) != 0 or count.value != 4:
+            self.previous = None
+            self.previous_read_at = None
+            return None
+        read_at = time.monotonic()
+        previous, self.previous = self.previous, tuple(ticks)
+        previous_read_at, self.previous_read_at = self.previous_read_at, read_at
+        # A late worker can leave only a few milliseconds of ticks before the next read.
+        if previous is None or previous_read_at is None or read_at - previous_read_at < HOST_IDLE_MIN_INTERVAL_SECONDS:
+            return None
+        delta = [(current - old) & 0xffffffff for old, current in zip(previous, ticks)]
+        return 100 * delta[2] / sum(delta) if sum(delta) else None
+
+    def close(self):
+        if self.library is not None and self.host is not None:
+            task = ctypes.c_uint32.in_dll(self.library, "mach_task_self_").value
+            self.library.mach_port_deallocate(task, self.host)
+            self.host = None
+
+def resource_sample(host_cpu, device, timeout):
+    idle = host_cpu.idle()
     try:
-        return audit_runner_inputs(
-            fixture_set=fixture_set,
-            observed_hash=observed_hash,
-            service_log=service_log,
-            server_url=server_url,
-        )
-    except OutOfOrderContractError as error:
-        raise CommandError(str(error), code=2) from error
+        load = finite(os.getloadavg()[0], MAX_LOAD_AVERAGE)
+    except OSError:
+        load = None
+    return {"idle_percent": idle, "load_1m": load, "cpu_percent": dict.fromkeys(RESOURCE_CATEGORIES)}
 
 
-def pause_timing_verdict(evidence_dir: Path) -> str:
-    """Read the existing timing signature without reinterpreting screenshot samples."""
-    try:
-        receipt = json.loads((evidence_dir / "pause-next-continue.json").read_text())
-        if type(receipt.get("schema_version")) is int and receipt["schema_version"] == 2:
-            return ("NOT_RUN" if receipt.get("mode") == "release-functional"
-                    and receipt.get("configuration") == "Release" else "UNVERIFIED")
-        if "schema_version" in receipt:
-            return "UNVERIFIED"
-        timeline = receipt.get("timeline")
-        starts = [item for item in timeline if isinstance(item, dict) and item.get("name") == "first_transition_start"]
-        signed = (receipt.get("suite") == "pause-next-continue" and len(starts) == 1
-                  and starts[0].get("status") == "detected" and starts[0].get("official_signed") is True)
-    except (OSError, ValueError, TypeError, AttributeError):
-        signed = False
-    return "PASS" if signed else "UNVERIFIED"
+class HostProbe:
+    """Bound native host reads independently of the inherited process-snapshot pool."""
 
+    def __init__(self, device):
+        self.device = device
+        self.host = None
+        self.spent = 0.0
+        self.unavailable = False
+        self.done = None
+        self.worker = None
+        self.requests = queue.Queue(maxsize=1)
+        self.request_count = 0
 
-def pause_visual_verdict(evidence_dir: Path, suite: str) -> str:
-    """Read the explicit Release functional version; retain the unversioned timing reader."""
-    try:
-        receipt = json.loads((evidence_dir / "pause-next-continue.json").read_text())
-        if "schema_version" not in receipt:
-            legacy = pause_timing_verdict(evidence_dir)
-            return "NOT_REQUIRED" if suite == "tvos-lifecycle-pause" and legacy == "PASS" else legacy
-        if not (type(receipt.get("schema_version")) is int and receipt["schema_version"] == 2
-                and receipt.get("mode") == "release-functional" and receipt.get("configuration") == "Release"
-                and receipt.get("suite") == "pause-next-continue" and receipt.get("functional_signed") is True
-                and receipt.get("timing_verdict") == "NOT_RUN"
-                and receipt.get("device") in ({"iphone", "ipad"} if suite == IOS_LIFECYCLE_PAUSE_SUITE else {"tvos"})):
-            return "UNVERIFIED"
-        names = ("timing-start", "before-pause", "after-next", "pause-hold-end", "continue-early", "after-auto-advance")
-        proofs = receipt["timeline"]
-        if not isinstance(proofs, list) or [item["name"] for item in proofs] != list(names):
-            return "UNVERIFIED"
-        marks = []
-        for proof in proofs:
-            mark = proof["mark"]
-            if mark not in {"A1", "A2", "A3", "A4", "A5"}:
-                return "UNVERIFIED"
-            png = (evidence_dir / (proof["name"] + ".png")).read_bytes()
-            if hashlib.sha256(png).hexdigest() != proof["png_sha256"]:
-                return "UNVERIFIED"
-            marks.append(mark)
-        if not (marks[1] != marks[2] and marks[2] == marks[3] == marks[4] and marks[5] != marks[4]):
-            return "UNVERIFIED"
-        return "PASS"
-    except (OSError, ValueError, TypeError, KeyError, AttributeError):
-        return "UNVERIFIED"
-
-
-def app_timeline_verdict(evidence_dir: Path) -> str:
-    """Bind the official Swift judge receipt to its immutable event prefix and content PNGs.
-
-    Timing rules live only in LifecycleTimelineJudge.swift. This reader never promotes
-    an absent/malformed signature, and never reinterprets the legacy Release signature.
-    """
-    def check(condition):
-        if not condition:
-            raise ValueError("invalid App timeline signature")
-
-    try:
-        receipt = json.loads((evidence_dir / "app-timeline-verdict.json").read_text())
-        check(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1 and receipt["verdict"] == "PASS")
-        check(receipt["suite"] == "lifecycle-pause-app-timeline")
-        count = receipt["event_count"]
-        check(type(count) is int and count > 0)
-        lines = (evidence_dir / "playback-lifecycle-timeline.jsonl").read_bytes().splitlines(keepends=True)[:count]
-        check(len(lines) == count and all(line.endswith(b"\n") for line in lines))
-        check(hashlib.sha256(b"".join(lines)).hexdigest() == receipt["timeline_sha256"])
-        events = [json.loads(line) for line in lines]
-        check(events[0]["kind"] == "timelineStarted"
-              and all(isinstance(receipt[key], str) and receipt[key] for key in ("case_nonce", "launch_nonce")))
-        previous = -math.inf
-        for sequence, event in enumerate(events, 1):
-            check(event["schemaVersion"] == 1 and event["sequence"] == sequence)
-            check(event["launchNonce"] == receipt["launch_nonce"] and event["caseNonce"] == receipt["case_nonce"])
-            check(type(event["uptime"]) in (float, int) and math.isfinite(event["uptime"]) and event["uptime"] >= previous)
-            previous = event["uptime"]
-        judgment = receipt["judgment"]
-        for key, kind in (("continueSequence", "continueReceived"), ("onsetSequence", "renderFadeStarted"),
-                          ("stableSequence", "sceneStable")):
-            check(type(judgment[key]) is int and 1 <= judgment[key] <= count)
-            check(events[judgment[key] - 1]["kind"] == kind)
-        proofs = receipt["content_checks"]
-        handshake = [proof for proof in proofs if proof["name"] == "clock-handshake"]
-        check(len(handshake) == 1)
-        clock = handshake[0]
-        check(clock["runner_request"] <= clock["app_uptime"] <= clock["runner_return"])
-        check(any(event["kind"] == "clockHandshake" and event["request"] == clock["request"]
-                  and event["uptime"] == clock["app_uptime"] for event in events))
-        names = ("timeline-start", "timeline-midpoint-pause", "timeline-after-next", "timeline-after-hold",
-                 "timeline-continue-early", "timeline-after-auto")
-        if "pause_hold" in receipt:
-            reference = receipt["pause_hold"]["reference"]
-            check(reference in {"timeline-after-next", "timeline-hold-hidden-reference"})
-            if reference == "timeline-hold-hidden-reference":
-                names += (reference,)
-        for name in names:
-            matches = [proof for proof in proofs if proof["name"] == name]
-            check(len(matches) == 1)
-            proof = matches[0]
-            check(proof["status"] in {"MATCH", "FROZEN"} and proof["request"] <= proof["return"] <= events[-1]["uptime"])
-            check(hashlib.sha256((evidence_dir / (name + ".png")).read_bytes()).hexdigest() == proof["png_sha256"])
-            if proof["status"] == "FROZEN":
-                check(hashlib.sha256((evidence_dir / (name + "-frozen-reference.png")).read_bytes()).hexdigest()
-                      == proof["frozen_proof"]["frozen_reference_sha256"])
-        return "PASS"
-    except (OSError, ValueError, KeyError, TypeError, IndexError, AssertionError):
-        return "UNVERIFIED"
-
-
-def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str = "a",
-                            configuration: str | None = None) -> dict[str, object]:
-    if suite in TIMELINE_LIFECYCLE_SUITES:
-        payload = {"verdict": app_timeline_verdict(evidence_dir), "suite": suite}
-        if payload["verdict"] != "PASS":
-            payload["verdict"] = "FAIL"
-            _write_visual_runner_report(evidence_dir, payload)
-            raise CommandError("App timeline: missing or invalid signed evidence", code=2)
-        _write_visual_runner_report(evidence_dir, payload)
-        return payload
-    if suite in {IOS_LIFECYCLE_PAUSE_SUITE, "tvos-lifecycle-pause"}:
-        verdict = pause_visual_verdict(evidence_dir, suite)
-        payload = {"verdict": verdict, "suite": suite, "timing_verdict": pause_timing_verdict(evidence_dir)}
-        # Current Release runs require v2; callers reading retained histories may omit configuration.
-        invalid_release = configuration == "Release" and (verdict != "PASS" or payload["timing_verdict"] != "NOT_RUN")
-        if invalid_release or (verdict == "UNVERIFIED" and (
-                suite == "tvos-lifecycle-pause" or payload["timing_verdict"] == "NOT_RUN")):
-            payload["verdict"] = "FAIL"
-            payload["error"] = "Release lifecycle: missing or invalid functional evidence"
-            _write_visual_runner_report(evidence_dir, payload)
-            raise CommandError(payload["error"], code=2)
-        _write_visual_runner_report(evidence_dir, payload)
-        return payload
-    if suite in OUT_OF_ORDER_VISUAL_SUITES:
+    def _run(self):
         try:
-            payload = evaluate_out_of_order_identity(evidence_dir)
-        except OutOfOrderContractError as error:
-            failed = {"verdict": "FAIL", "suite": suite, "error": str(error)}
-            _write_visual_runner_report(evidence_dir, failed)
-            raise CommandError(f"Visual assertion failed; cannot mark SUCCESS: {error}", code=2) from error
-        if payload.get("verdict") != "PASS":
-            _write_visual_runner_report(evidence_dir, payload)
-            raise CommandError("Visual assertion did not pass; cannot mark SUCCESS.", code=2)
-        _write_visual_runner_report(evidence_dir, payload)
-        return payload
-    if suite in ALBUM_EMPTY_SUITES:
+            while True:
+                request = self.requests.get()
+                if request is None or self.unavailable:
+                    break
+                done, values = request
+                try:
+                    if self.host is None:
+                        self.host = HostCpu()
+                        self.host.idle()
+                    values.append(resource_sample(self.host, self.device, None))
+                except (OSError, ValueError, TypeError, AttributeError):
+                    pass
+                finally:
+                    done.set()
+        finally:
+            if self.host is not None:
+                self.host.close()
+
+    def sample(self):
+        remaining = HOST_WALL_BUDGET_SECONDS - self.spent
+        if self.unavailable or remaining <= 0:
+            self.unavailable = True
+            return None
+        # A slow native read may finish between ticks; never overlap it with a new worker.
+        if self.done is not None and not self.done.is_set():
+            return None
+        done, values = Event(), []
+        self.done = done
+        started = time.perf_counter()
+        self.request_count += 1
         try:
-            payload = evaluate_album_empty_evidence(evidence_dir, fixture_set, use_ios_album_geometry=(suite == "album-empty"))
-        except (AlbumServerContractError, FilterContractError) as error:
-            failed = {"verdict": "FAIL", "suite": suite, "error": str(error)}
-            _write_visual_runner_report(evidence_dir, failed)
-            raise CommandError(f"Visual assertion failed; cannot mark SUCCESS: {error}", code=2) from error
-        if payload.get("verdict") != "PASS":
-            _write_visual_runner_report(evidence_dir, payload)
-            raise CommandError("Visual assertion did not pass; cannot mark SUCCESS.", code=2)
-        _write_visual_runner_report(evidence_dir, payload)
-        return payload
-    if suite in FILTER_VISUAL_SUITES:
+            # Pay thread startup once; per-tick startup can exhaust the cap on a loaded host.
+            if self.worker is None:
+                worker = Thread(target=self._run, daemon=True)
+                worker.start()
+                self.worker = worker
+            self.requests.put_nowait((done, values))
+            finished = done.wait(max(0, min(HOST_SAMPLE_TIMEOUT_SECONDS, remaining)
+                                        - (time.perf_counter() - started)))
+        except (OSError, RuntimeError, queue.Full):
+            finished = False
+            if self.worker is None:
+                done.set()
+        self.spent += time.perf_counter() - started
+        self.unavailable = finished and not values
+        return values[0] if finished and values else None
+
+    def close(self):
+        self.unavailable = True
+        # Wake an idle worker; an in-flight read observes shutdown before taking more work.
         try:
-            payload = evaluate_filter_visual_identity(evidence_dir, suite, fixture_set=fixture_set)
-        except FilterContractError as error:
-            failed = {"verdict": "FAIL", "suite": suite, "error": str(error)}
-            _write_visual_runner_report(evidence_dir, failed)
-            raise CommandError(f"Visual assertion failed; cannot mark SUCCESS: {error}", code=2) from error
-        if payload.get("verdict") == "PARTIAL" and suite == "tvos-person":
-            vision = payload.get("vision") if isinstance(payload.get("vision"), dict) else {}
-            if vision.get("verdict") == "UNVERIFIED":
-                _write_visual_runner_report(evidence_dir, payload)
-                return payload
-        allowed = {"UNVERIFIED", "BLOCKED_ENV", "PASS"} if suite == "filter-vision" else {"PASS"}
-        if payload.get("verdict") not in allowed:
-            _write_visual_runner_report(evidence_dir, payload)
-            raise CommandError("Visual assertion did not pass; cannot mark SUCCESS.", code=2)
-        if suite == "filter-vision" and payload.get("verdict") == "PASS" and payload.get("environment") != "device":
-            _write_visual_runner_report(evidence_dir, payload)
-            raise CommandError("Simulator Vision cannot be marked PASS.", code=2)
-        _write_visual_runner_report(evidence_dir, payload)
-        return payload
-    if suite not in VISUAL_SUITES:
-        payload = {"verdict": "NOT_REQUIRED", "suite": suite}
-        _write_visual_runner_report(evidence_dir, payload)
-        return payload
+            self.requests.put_nowait(None)
+        except queue.Full:
+            # Replace queued work with shutdown so a late worker cannot block on get().
+            try:
+                pending = self.requests.get_nowait()
+                if pending is not None:
+                    pending[0].set()
+            except queue.Empty:
+                pass
+            try:
+                self.requests.put_nowait(None)
+            except queue.Full:
+                pass
+
+
+RUNNER_MEMBER_PROBE_TIMEOUT_SECONDS = 3
+MAX_RUNNER_PROCESS_TABLE_BYTES = 2 * 1024 * 1024
+
+
+class RunnerGroupCleanupError(RuntimeError):
+    """Build paths must be retained if runner descendants cannot be stopped."""
+
+    def __init__(self, reason, *, members=None, truncated=False):
+        self.members = members
+        self.members_truncated = truncated
+        super().__init__(reason + "; live members: " + render_runner_group_members(members, truncated=truncated))
+
+def runner_group_members(group_id):
+    """A failure-only ps projection: no arguments, paths, PIDs or arbitrary names survive."""
     try:
-        payload = evaluate_visual_identity(evidence_dir, suite)
-    except IdentityAssertionError as error:
-        failed = {"verdict": "FAIL", "suite": suite, "error": str(error)}
-        _write_visual_runner_report(evidence_dir, failed)
-        raise CommandError(f"Visual assertion failed; cannot mark SUCCESS: {error}", code=2) from error
-    if payload.get("verdict") != "PASS":
-        _write_visual_runner_report(evidence_dir, payload)
-        raise CommandError("Visual assertion did not pass; cannot mark SUCCESS.", code=2)
-    _write_visual_runner_report(evidence_dir, payload)
-    return payload
+        deadline = time.monotonic() + RUNNER_MEMBER_PROBE_TIMEOUT_SECONDS
+        table_bytes = 0
+        def read_rows(selection):
+            nonlocal table_bytes
+            command = ["ps", *selection, "-o", "pid=,ppid=,pgid=,stat=,comm="]
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, 0)
+            try:
+                table = subprocess.check_output(command, text=True, stderr=subprocess.PIPE, timeout=remaining)
+            except subprocess.CalledProcessError as error:
+                if selection[0] in {"-g", "-p"} and error.returncode == 1 and error.output == "" and error.stderr == "":
+                    return {}
+                raise
+            table_bytes += len(table.encode())
+            if table_bytes > MAX_RUNNER_PROCESS_TABLE_BYTES:
+                raise ValueError("runner process table exceeds parse limit")
+            rows = [line.split(None, 4) for line in table.splitlines()]
+            return {row[0]: row for row in rows if len(row) == 5 and all(value.isdecimal() for value in row[:3])}
 
+        # Darwin's -g selects a process group; procps uses it for sessions instead.
+        rows = read_rows(["-g", str(group_id)] if sys.platform == "darwin" else ["-ax"])
+        live = [row for row in rows.values() if row[2] == str(group_id) and not row[3].startswith("Z")]
+        parents = sorted({row[1] for row in live[:MAX_PROCESSES] if row[1] != "0" and row[1] not in rows})
+        if parents:
+            try:
+                rows.update(read_rows(["-p", ",".join(parents)]))
+            except (OSError, ValueError, subprocess.SubprocessError):
+                # Parent lookup is optional; keep the known survivors if its remaining budget runs out.
+                pass
+        members = []
+        for row in live[:MAX_PROCESSES]:
+            parent = rows.get(row[1])
+            members.append({"name": public_runner_process_name(row[4]),
+                "parent": public_runner_process_name(parent[4]) if parent else "unknown",
+                "state": "exiting" if "E" in row[3] else {"R": "running", "S": "sleeping", "I": "sleeping", "U": "uninterruptible",
+                          "D": "uninterruptible", "T": "stopped"}.get(row[3][:1], "unknown")})
+        return members, len(live) > MAX_PROCESSES
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print("Runner member probe unavailable: " + type(error).__name__, file=sys.stderr, flush=True)
+        return None, False
 
-def _write_visual_runner_report(evidence_dir: Path, payload: Mapping[str, object]) -> None:
-    (evidence_dir / "visual-identity-runner.json").write_text(
-        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-
-
-def require_official_single_pass(summary: TestResultsSummary) -> None:
-    if (
-        summary.total_test_count != 1
-        or summary.passed_tests != 1
-        or summary.failed_tests != 0
-        or summary.skipped_tests != 0
-        or summary.result.lower() != "passed"
-    ):
-        raise CommandError(
-            "strict E2E official counts must be total=1, passed=1, failed=0, skipped=0; "
-            f"actual total={summary.total_test_count} passed={summary.passed_tests} "
-            f"failed={summary.failed_tests} skipped={summary.skipped_tests} result={summary.result}."
-        )
+def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen=None, failure_report=None, environment=None):
+    with log_path.open("a+") as log:
+        offset = log.tell()
+        process = subprocess.Popen(command, cwd=repo_root, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                                   **({"env": environment} if environment is not None else {}))
+        code = None
+        try:
+            code = process.wait(timeout=timeout_seconds)
+        finally:
+            try:
+                stop_group(process)
+                deadline = time.monotonic() + GROUP_TERM_GRACE_SECONDS
+                alive = group_has_live_members(process.pid)
+                if alive:
+                    # Cover survivors appearing after the shared helper's last group observation.
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except PermissionError:
+                        if group_has_live_members(process.pid):
+                            raise
+                    alive = group_has_live_members(process.pid)
+                while alive:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("Runner process group still has live members")
+                    time.sleep(0.05)
+                    alive = group_has_live_members(process.pid)
+            except BaseException as error:
+                reason = ("RuntimeError: Runner process group still has live members" if str(error) == "Runner process group still has live members"
+                          else type(error).__name__)
+                try:
+                    members, truncated = runner_group_members(process.pid)
+                    validate_runner_group_members(members)
+                except BaseException:
+                    # A second cancellation must never authorize deleting live build inputs.
+                    members, truncated = None, False
+                raise RunnerGroupCleanupError("Runner process group cleanup failed: " + reason,
+                    members=members, truncated=truncated) from None
+            log.seek(offset)
+            lines = log.read().splitlines()
+            for line in lines:
+                if re.fullmatch(r"(?:keychain|privacy)_reset(?:_retry)?_exit=-?(?:0|[1-9][0-9]{0,2}); "
+                                r"stderr_class=(?:empty|service-unavailable|device-unavailable|permission-denied|posix-error|simulator-error|unclassified)", line):
+                    print(line, file=sys.stderr, flush=True)
+            truncation = next((line for line in lines if line.startswith(TRUNCATION_PREFIX)
+                               and line.removeprefix(TRUNCATION_PREFIX) in TRUNCATION_REASONS), None)
+            if truncation is not None:
+                if truncation_seen is not None:
+                    truncation_seen.set()
+                report_truncation(truncation.removeprefix(TRUNCATION_PREFIX))
+            errors = [line for line in lines if line.startswith(("CommandError: ", "OfflineCommandError: ", "InfrastructureTimeout: "))]
+            if errors:
+                print(errors[-1], file=sys.stderr, flush=True)
+    return code

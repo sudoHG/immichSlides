@@ -41,50 +41,6 @@ def valid_summary():
     }
 
 
-def nightly_retry_summary(kind="strict"):
-    from ci_flaky import ASSERTION_FAILURE, merge_retry
-    summary = valid_summary()
-    summary["identity"].pop("dirty")
-    summary["identity"].update(event="schedule", ref="refs/heads/main")
-    summary["source"].update(event="schedule", workflow_path=".github/workflows/ci-nightly.yml")
-    identity = (ci_summary.test_identity("strict", "smoke", device="iphone", configuration="Debug",
-        suite="smoke", scenario="normal", fixture="a") if kind == "strict" else
-        ci_summary.test_identity("ui", "SettingsUITests/testOpen", platform="ios", device="iphone"))
-    summary["run"].update(id="10", tier=kind, job="nightly-strict" if kind == "strict" else "ui-iphone", shard="a")
-    row = merge_retry(ci_summary.observation(identity, "failed", 1, exit_code=65,
-        reason=ASSERTION_FAILURE, message="First playback assertion failed"), ci_summary.observation(identity, "passed", 2))
-    row["nightly_retry"] = {"schema_version": 1, "policy_version": 1, "runner_hosted": True, "failed_case_count": 1}
-    summary["population"].update(declared=[identity], compiled=[identity], observed=[row])
-    return summary
-
-
-def discovery_summary():
-    summary = valid_summary()
-    summary.update(schema_version=2, identity={"schema_version": 1, "event": "pull_request",
-        "repository": "sudoHG/immichSlides", "pull_request": 1, "base_sha": "a" * 40,
-        "head_sha": "b" * 40, "merge_sha": "c" * 40, "tree_sha": "d" * 40})
-    summary["source"].update(event="pull_request", workflow_path=".github/workflows/ci-ui.yml")
-    summary["run"] = {"id": "123", "attempt": 1, "tier": "ui", "job": "ui-iphone", "shard": "scoped-a"}
-    entry = ci_summary.test_identity("ui", "SettingsUITests/testOpen", platform="ios", device="iphone")
-    summary["population"].update(declared=[entry], compiled=[entry],
-        observed=[ci_summary.observation(entry, "passed", 1)])
-    summary["hashes"]["manifests"]["ui-scoped-plan"] = "e" * 64
-    summary["compiled_evidence"] = {"schema_version": 1, "mode": "official-result-discovery-v1",
-        "identity": copy.deepcopy(summary["identity"]), "run": dict(summary["run"]), "plan_sha256": "e" * 64,
-        "device_id": "target", "first_exit_code": 0,
-        "official_tests": {"devices": [{"deviceId": "target", "modelName": "iPhone 17", "platform": "iOS Simulator"}],
-            "testNodes": [{"nodeType": "UI test bundle", "name": "immichSlidesUITests", "children": [
-                {"nodeType": "Test Case", "nodeIdentifier": entry["key"] + "()",
-                 "result": "Passed", "durationInSeconds": 1}]}]}}
-    refresh_discovery_hash(summary)
-    return summary
-
-
-def refresh_discovery_hash(summary):
-    raw = json.dumps(summary["compiled_evidence"], sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-    summary["hashes"]["manifests"]["ui-discovery"] = hashlib.sha256(raw).hexdigest()
-
-
 def archive_download_summary():
     summary = valid_summary()
     summary["identity"] = {"schema_version": 1, "event": "schedule", "repository": "sudoHG/immichSlides",
@@ -148,1208 +104,14 @@ def first_failure_receipt(*, native=False, gate=False):
     return receipt
 
 
-def album_capture_diagnostic():
-    return {"schema_version": 1, "site": "album-play-1", "probe": "frameSynchronized", "fixture": "a",
-        "rejections": ["motion-progress-range"], "poll_count": 2,
-        "polls": [[0.801, 0.91], [1.02, 1.11]], "polls_truncated": False,
-        "window_seconds": 4.8, "settle_seconds": 0.8,
-        "baseline": {"history": "no-baseline", "layers": "no-baseline"},
-        "pause": {"requested_seconds": -0.8, "returned_seconds": -0.2, "observed_seconds": -0.01},
-        "members": ["A2", "A1"], "unmapped_member_count": 0}
 
 
-def hosted_timeout_summary():
-    summary = valid_summary()
-    summary["identity"].update(event="schedule", ref="refs/heads/main")
-    summary["identity"].pop("dirty")
-    summary["source"].update(event="schedule", workflow_path=".github/workflows/ci-nightly.yml")
-    summary["run"].update(id="10", tier="strict", job="nightly-strict", shard="iphone-debug-0")
-    identity = ci_summary.test_identity("strict", "smoke", device="iphone", configuration="Debug",
-        suite="smoke", scenario="normal", fixture="a")
-    row = ci_summary.observation(identity, "failed", 12, exit_code=65,
-        failure_diagnostics={"failure_phase": "settings_navigation", "failure_class": "navigation"})
-    row["first_failure"] = row["attempts"][0]["first_failure"] = first_failure_receipt()
-    row["first_failure"]["element"] = "slideshow.control.settings.button"
-    summary["population"].update(declared=[identity], compiled=[identity], observed=[row])
-    summary["status"] = "failed"
-    resource = bounded_diagnostics_receipt(resources=True)["case_resources"][0]
-    resource["failure_samples"] = [dict(resource["failure_samples"][0], elapsed_seconds=6, idle_percent=0),
-        dict(resource["failure_samples"][0], elapsed_seconds=10, idle_percent=5)]
-    diagnostics = bounded_diagnostics_receipt()
-    diagnostics["events"][0].update(scope="xcode", phase="test-execution", sequence=4)
-    diagnostics["case_resources"] = [resource]
-    summary["strict_case_evidence"] = [{"identity": identity, "bounded_diagnostics": diagnostics}]
-    return summary, resource
-
-
-def hosted_album_timeout_summary():
-    summary, resource = hosted_timeout_summary()
-    row = summary["population"]["observed"][0]
-    row.update(failure_phase="visible_scene_capture", failure_class="probe_readback")
-    row["attempts"][0].update(failure_phase="visible_scene_capture", failure_class="probe_readback")
-    receipt = row["first_failure"]
-    receipt.update(step="wait-scene", element="slideshow.scenePresentation.contract.summary",
-        gate={"kind": "album-capture", "stable": False, "paused": True, "entry_hint_hidden": True,
-              "advanced": True, "layers_changed": True, "manifest_complete": True, "phase": "transition"})
-    receipt["timing"].update(wait_elapsed_seconds=5.23, deadline_seconds=4.8)
-    return summary, resource
-
-
-def hosted_v5_summary(*, ui=False, tool=False):
-    summary, resource = hosted_timeout_summary()
-    row = summary["population"]["observed"][0]
-    messages = ["Failed to get matching snapshots: Timed out while evaluating UI query"] if tool else [
-        "After pausing, the control value must be play."]
-    row.update(failure_phase="unknown" if tool else "control_action",
-               failure_class="snapshot_query" if tool else "control_state", failure_messages=messages)
-    row["attempts"][0].update({key: row[key] for key in ("failure_phase", "failure_class", "failure_messages")})
-    if ui:
-        case = ci_summary.test_identity("ui", "ExampleUITests/testOpen", platform="ios", device="iphone")
-        summary["run"].update(tier="ui", job="ui-iphone", shard="navigation")
-        summary["population"].update(declared=[case], compiled=[case])
-        row["identity"] = case
-        summary.pop("strict_case_evidence")
-    if tool:
-        row.pop("first_failure")
-        row["attempts"][0].pop("first_failure")
-    else:
-        row["first_failure"].update(step="wait-scene")
-    return summary, resource
-
-
-def hosted_mode_departure_summary(phase):
-    summary, resource = hosted_timeout_summary()
-    row = summary["population"]["observed"][0]
-    row.update(failure_phase=phase, failure_class="navigation")
-    row["attempts"][0].update(failure_phase=phase, failure_class="navigation")
-    row["first_failure"].update(step="mode-departure", element="mode.continue.button", action="tap")
-    row["first_failure"]["state"].update(surface="mode", scene_status="UNRECOGNIZABLE",
-        observation="failure-snapshot", control_bar="unknown", focus="unknown", history_count=None,
-        autoplay="unknown", orientation="portrait", query_error_code=None)
-    return summary, resource
-
-
-def album_capture_gate_rejections(receipt):
-    """Single-fact violations shared by proof-reader and producer boundary tests."""
-    from ci_failure_diagnostics import ALBUM_CAPTURE_GATE_PHASES
-    ineligible = "environment limit: failure is not an eligible timing wait"
-    cases = [("missing gate", None, None, "delete", ineligible)]
-    for field in receipt["gate"]:
-        cases.append(("missing " + field, field, None, "delete", "first failure gate: invalid fields"))
-    cases += [(field + "=" + repr(value), field, value, "set", message)
-        for field, values, message in (
-            ("kind", (None, "other"), "first failure: invalid gate kind"),
-            ("stable", (True, None), ineligible),
-            ("paused", (False, None), ineligible),
-            ("entry_hint_hidden", (False, None), ineligible),
-            ("advanced", (False, None), ineligible),
-            ("layers_changed", (False, None), ineligible),
-            ("manifest_complete", (False, None), ineligible),
-            ("phase", (None, "other"), "first failure: invalid gate phase"),
-            ("phase", tuple(phase for phase in ALBUM_CAPTURE_GATE_PHASES
-                            if phase not in {"transition", "incomingFromLoading"}), ineligible))
-        for value in values]
-    for field in ("stable", "paused", "entry_hint_hidden", "advanced", "layers_changed", "manifest_complete"):
-        for value in (0, 1, "true"):
-            cases.append((field + "=" + repr(value), field, value, "set", "first failure gate: invalid boolean"))
-    for label, field, value, operation, message in cases:
-        changed = copy.deepcopy(receipt)
-        if field is None:
-            changed.pop("gate")
-        elif operation == "delete":
-            changed["gate"].pop(field)
-        else:
-            changed["gate"][field] = value
-        yield label, changed, message
-    changed = copy.deepcopy(receipt)
-    changed["gate"] = None
-    yield "null gate", changed, "first failure gate: invalid fields"
-    changed = copy.deepcopy(receipt)
-    changed["element"] = "slideshow.control.next.button"
-    yield "Next did not advance", changed, ineligible
-    changed = copy.deepcopy(receipt)
-    changed["gate"].update(advanced=None, layers_changed=None)
-    yield "first capture frozen transition", changed, ineligible
 
 
 class SummaryContractTests(unittest.TestCase):
-    def test_v5_failed_retry_is_supplemental_evidence_with_a_closed_shape(self):
-        from ci_failure_diagnostics import environment_limit_evidence
-        for ui in (False, True):
-            summary, resource = hosted_v5_summary(ui=ui, tool=ui)
-            row = summary["population"]["observed"][0]
-            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
-            row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-            original = copy.deepcopy(row)
-            retry = {"number": 2, "outcome": "failed", "exit_code": 65, "duration_seconds": 3,
-                     "reason": None, "message": None, "failure_messages": ["App timeline:"]}
-            row["retry_failure"] = retry
-            with self.subTest(ui=ui):
-                parsed = ci_summary.parse_summary(summary)["population"]["observed"][0]
-                self.assertEqual(original, {key: value for key, value in parsed.items() if key != "retry_failure"})
-                self.assertEqual(retry, parsed["retry_failure"])
-            for field, value in (("number", 1), ("number", True), ("outcome", "passed"), ("duration_seconds", -1),
-                                 ("message", "private"), ("reason", "private"), ("environment_limit", proof),
-                                 ("nightly_retry", {}), ("unknown", 1)):
-                changed = copy.deepcopy(summary)
-                changed["population"]["observed"][0]["retry_failure"][field] = value
-                with self.subTest(ui=ui, field=field), self.assertRaisesRegex(ci_summary.ContractError, "^retry failure:"):
-                    ci_summary.parse_summary(changed)
-            projected = ci_summary.observation(row["identity"], "failed", 1, exit_code=65)
-            projected["retry_failure"] = retry
-            for outcome, code in (("timed-out", 124), ("not-run", None), ("crashed", 65)):
-                projected["retry_failure"] = {**retry, "outcome": outcome, "exit_code": code}
-                projected["retry_failure"].pop("failure_messages")
-                ci_summary.validate_observation(projected)
-                ordinary = copy.deepcopy(summary)
-                ordinary["population"]["observed"] = [projected]
-                self.assertEqual(ordinary, ci_summary.parse_summary(ordinary))
-                with self.assertRaisesRegex(ci_summary.ContractError, "^nightly retry: requires a main nightly shard$"):
-                    ci_summary.parse_summary({**ordinary, "source": {**ordinary["source"], "workflow_path": ".github/workflows/ci-ui.yml"}})
-            with self.assertRaisesRegex(ci_summary.ContractError, "^retry failure: requires one failed"):
-                ci_summary.validate_observation({**projected, "attempts": [*projected["attempts"], retry]})
 
-    def test_passing_retry_can_retain_an_independently_bound_v5_first_observation(self):
-        from ci_failure_diagnostics import environment_limit_evidence
-        from ci_flaky import ASSERTION_FAILURE, merge_retry
-        summary, resource = hosted_v5_summary()
-        original = summary["population"]["observed"][0]
-        proof = environment_limit_evidence(summary, original, [resource], runner_hosted=True, policy_version=5)
-        ordinary = copy.deepcopy(original)
-        ordinary["attempts"][0]["reason"] = ASSERTION_FAILURE
-        claim = {"schema_version": 1, "policy_version": 1, "runner_hosted": True, "failed_case_count": 1}
-        retried = merge_retry(ordinary, ci_summary.observation(original["identity"], "passed", 3), nightly_proof=claim)
-        original["environment_limit"] = original["attempts"][0]["environment_limit"] = proof
-        retried["nightly_retry_first"] = original
-        summary["population"]["observed"] = [retried]
-        self.assertEqual(summary, ci_summary.parse_summary(summary))
-        for retained_v5 in (True, False):
-            candidate = copy.deepcopy(retried)
-            if not retained_v5:
-                candidate.pop("nightly_retry_first")
-            before = copy.deepcopy(candidate)
-            fallback = ci_summary.fallback_nightly_retry(candidate)
-            self.assertEqual(original if retained_v5 else ordinary, fallback)
-            ci_summary.validate_observation(fallback)
-            fallback["attempts"][0]["duration_seconds"] = 999
-            self.assertEqual(before, candidate)
-        invalid_backup = copy.deepcopy(retried)
-        invalid_backup["nightly_retry_first"]["identity"]["key"] = "unrelated"
-        self.assertEqual(ordinary, ci_summary.fallback_nightly_retry(invalid_backup))
-        for key in ("identity", "duration", "ledger", "without-proof", "recursive"):
-            changed = copy.deepcopy(summary)
-            row = changed["population"]["observed"][0]
-            first = row["nightly_retry_first"]
-            if key == "identity":
-                first["identity"]["key"] = "unrelated"
-            elif key == "duration":
-                first["duration_seconds"] = first["attempts"][0]["duration_seconds"] = 9
-            elif key == "ledger":
-                changed.pop("strict_case_evidence")
-            elif key == "without-proof":
-                row.pop("nightly_retry")
-            else:
-                first["nightly_retry_first"] = {}
-            with self.subTest(key=key), self.assertRaisesRegex(ci_summary.ContractError,
-                    "nightly retry first:|environment limit differs from summary case evidence"):
-                ci_summary.parse_summary(changed)
 
-    def test_nightly_retry_retained_reader_needs_no_image_or_runner_dependencies(self):
-        from ci_flaky import P2_REVIEW_SUITES, IOS_PENDING_REVIEW_SUITE
-        from strict_e2e_p2_contract import P2_CASES
-        from strict_e2e_runner_support import IOS_LIFECYCLE_PAUSE_SUITE
-        self.assertEqual(set(P2_CASES), P2_REVIEW_SUITES)
-        self.assertEqual(IOS_LIFECYCLE_PAUSE_SUITE, IOS_PENDING_REVIEW_SUITE)
-        payloads = [nightly_retry_summary()]
-        for suite in ("p2-exif", IOS_PENDING_REVIEW_SUITE):
-            summary = nightly_retry_summary()
-            row = summary["population"]["observed"][0]
-            row["identity"]["key"] = row["identity"]["dimensions"]["suite"] = suite
-            row["outcome"] = row["attempts"][1]["outcome"] = "needs-human-review"
-            summary["population"].update(declared=[row["identity"]], compiled=[row["identity"]])
-            summary["status"] = "unverified"
-            payloads.append(summary)
-        code = """import json, sys
-sys.path.insert(0, sys.argv[1])
-from ci_summary import parse_summary
-for item in json.load(sys.stdin):
-    parse_summary(item)
-assert not any(name == 'PIL' or name.startswith('PIL.') for name in sys.modules)
-assert 'strict_e2e_p2_contract' not in sys.modules
-assert 'strict_e2e_runner_support' not in sys.modules
-print('parsed 3 nightly retry records without image or runner dependencies')
-"""
-        completed = subprocess.run([sys.executable, "-S", "-B", "-c", code, str(Path(__file__).resolve().parent)],
-            input=json.dumps(payloads), capture_output=True, text=True, timeout=30)
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertIn("parsed 3 nightly retry records", completed.stdout)
 
-    def test_failed_then_review_pending_retry_keeps_review_and_cannot_supply_a_recovery_night(self):
-        import ci_report
-        from ci_nightly import aggregate_nightly
-        from test_ci_report import entry
-        summary = nightly_retry_summary()
-        identity = ci_summary.test_identity("strict", "p2-exif", device="iphone", configuration="Debug",
-            suite="p2-exif", scenario="normal", fixture="a")
-        summary["population"].update(declared=[identity], compiled=[identity])
-        row = summary["population"]["observed"][0]
-        row.update(identity=identity, outcome="needs-human-review")
-        row["attempts"][1].update(outcome="needs-human-review", reason="P2 contract requires signed human review")
-        row["first_failure"] = row["attempts"][0]["first_failure"] = first_failure_receipt()
-        summary["status"] = "unverified"
-        self.assertEqual(summary, ci_summary.parse_summary(summary))
-        result = aggregate_nightly([identity], [summary], live_in_scope=False)
-        self.assertEqual(("environment-limited", [identity], [identity]),
-                         (result["status"], result["needs_human_review"], result["flaky"]))
-        self.assertIn("needs-human-review (flaky; yellow)", ci_summary.render_markdown(summary))
-        report = entry()
-        report.update(status="environment-limited", observed=[row])
-        report["diagnostics"]["failures"] = [ci_report.failure_details(row)]
-        decision = ci_report.issue_decision(None, identity, [report], registry_referenced=False)
-        self.assertEqual(("open", []), (decision["action"], decision["state"]["explicit_pass_nights"]))
-        from run_strict_e2e import resolve_suite_selector
-        from strict_e2e_p2_contract import RAW_VERDICT
-        method = resolve_suite_selector("ios", "p2-exif").split("/", 1)[1]
-        phase = {"identity": identity, "exit_code": 65, "log_present": True, "build_operations": 0, "products_unchanged": True,
-            "retry_method": method, "retry_failed_case_count": 1, "retry_assertion_methods": [method],
-            "official_method_durations": {method: 1}, "official_methods": [{"identifier": method, "result": "Failed"}],
-            "official_summary": {"totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0}}
-        phase["retry"] = {**phase, "exit_code": 0, "p2_verdict": RAW_VERDICT,
-            "official_method_durations": {method: 2}, "official_methods": [{"identifier": method, "result": "Passed"}],
-            "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}
-        methods, missing = ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
-        self.assertEqual(("needs-human-review", []), (methods[0]["outcome"], missing))
-        phase["retry"].pop("p2_verdict")
-        methods, missing = ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
-        self.assertEqual([], missing)
-        original = copy.deepcopy(summary)
-        original["population"]["observed"] = [ci_summary.fallback_nightly_retry(row)]
-        original["status"] = "failed"
-        first_phase = {key: value for key, value in phase.items() if key != "retry"}
-        first_methods, first_missing = ci_report.method_observations(original, {"warm": [first_phase]}, runner_hosted=True)
-        self.assertEqual([], first_missing)
-        self.assertEqual(first_methods, methods)
-        self.assertEqual(("failed", 1), (methods[0]["outcome"], len(methods[0]["attempts"])))
-        self.assertNotIn("nightly_retry", methods[0])
-        for mutation in ("ui", "ordinary-strict", "missing-proof", "p2-auto-pass"):
-            changed = copy.deepcopy(summary)
-            target = changed["population"]["observed"][0]
-            if mutation == "missing-proof":
-                target.pop("nightly_retry")
-            elif mutation == "p2-auto-pass":
-                target["outcome"] = "flaky-passed"
-                target["attempts"][1]["outcome"] = "passed"
-            elif mutation == "ordinary-strict":
-                target["identity"]["dimensions"]["suite"] = "smoke"
-            else:
-                target["identity"] = ci_summary.test_identity("ui", "ExampleUITests/testOpen", platform="ios", device="iphone")
-            with self.subTest(mutation=mutation), self.assertRaisesRegex(ci_summary.ContractError,
-                    "nightly retry:|first failure requires"):
-                ci_summary.parse_summary(changed)
-
-    def test_hosted_nightly_retry_is_closed_scoped_and_retains_the_first_failure(self):
-        for kind in ("strict", "ui"):
-            summary = nightly_retry_summary(kind)
-            row = summary["population"]["observed"][0]
-            row["failure_messages"] = row["attempts"][0]["failure_messages"] = ["App timeline:"]
-            with self.subTest(kind=kind):
-                self.assertEqual(summary, ci_summary.parse_summary(summary))
-                rendered = ci_summary.render_markdown(summary)
-                self.assertIn("flaky (yellow)", rendered)
-                self.assertIn("App timeline:", rendered)
-                self.assertNotIn("First playback assertion failed", rendered)
-            for field, value in (("schema_version", True), ("policy_version", 2), ("runner_hosted", False),
-                                 ("failed_case_count", 0), ("failed_case_count", 4), ("failed_case_count", True),
-                                 ("extra", "unknown")):
-                changed = copy.deepcopy(summary)
-                changed["population"]["observed"][0]["nightly_retry"][field] = value
-                with self.subTest(field=field, value=value), self.assertRaisesRegex(ci_summary.ContractError, "^nightly retry:"):
-                    ci_summary.parse_summary(changed)
-            for mutation in ("workflow", "event", "ref", "tier", "fork", "first-exit", "last-exit",
-                             "reason", "attempt-proof", "failure-messages"):
-                changed = copy.deepcopy(summary)
-                target = changed["population"]["observed"][0]
-                if mutation == "workflow":
-                    changed["source"]["workflow_path"] = ".github/workflows/ci-ui.yml"
-                elif mutation == "event":
-                    changed["identity"].update(event="workflow_dispatch", ref="refs/heads/topic")
-                    changed["source"]["event"] = "workflow_dispatch"
-                elif mutation == "ref":
-                    changed["identity"].update(event="workflow_dispatch", ref="refs/tags/v1")
-                    changed["source"]["event"] = "workflow_dispatch"
-                elif mutation == "tier":
-                    changed["run"]["tier"] = "host"
-                elif mutation == "fork":
-                    changed["source"]["fork_originated"] = True
-                elif mutation == "first-exit":
-                    target["attempts"][0]["exit_code"] = 124
-                elif mutation == "last-exit":
-                    target["attempts"][1]["exit_code"] = None
-                elif mutation == "reason":
-                    target["attempts"][0]["reason"] = "Preparation failed"
-                elif mutation == "attempt-proof":
-                    target["attempts"][0]["nightly_retry"] = target["nightly_retry"]
-                else:
-                    target["attempts"][0]["failure_messages"] = ["App timeline:", "App timeline:"]
-                with self.subTest(mutation=mutation), self.assertRaisesRegex(ci_summary.ContractError,
-                        "nightly retry:|failure messages require"):
-                    ci_summary.parse_summary(changed)
-            legacy = copy.deepcopy(summary)
-            legacy["population"]["observed"][0].pop("nightly_retry")
-            legacy["population"]["observed"][0].pop("failure_messages")
-            legacy["population"]["observed"][0]["attempts"][0].pop("failure_messages")
-            self.assertEqual(legacy, ci_summary.parse_summary(legacy))
-
-    def test_invalid_album_diagnostics_leave_the_valid_gate_and_v5_proof_unchanged(self):
-        from ci_failure_diagnostics import (collect_first_failure_spool, environment_limit_evidence,
-            public_first_failure, scan_diagnostic_json)
-        summary, resource = hosted_album_timeout_summary()
-        row = summary["population"]["observed"][0]
-        messages = ["Album capture preparation must reach a complete paused scene within the playback capture budget."]
-        row["failure_messages"] = row["attempts"][0]["failure_messages"] = messages
-        legacy = row["first_failure"]
-        legacy["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
-        expected = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
-        method = "StrictE2EFilterIOSUITests/testFilterAlbumTargetMembers"
-        for defect in ("poll-order", "pause-order", "private-field", "old-gate"):
-            receipt = copy.deepcopy(legacy)
-            receipt["album_capture"] = album_capture_diagnostic()
-            if defect == "poll-order":
-                receipt["album_capture"]["polls"] = [[1.0, 1.1], [0.8, 0.9]]
-            elif defect == "pause-order":
-                receipt["album_capture"]["pause"]["observed_seconds"] = -1
-            else:
-                receipt["album_capture"]["raw_probe"] = "PRIVATE_SENTINEL"
-                if defect == "old-gate":
-                    receipt["gate"]["stable"] = "invalid"
-            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
-                directory = Path(raw)
-                (directory / "0.json").write_text(json.dumps(receipt))
-                node = {"nodeIdentifier": method, "result": "Failed"}
-                collect_first_failure_spool(directory, [method], [node], directory / "images")
-                if defect == "old-gate":
-                    self.assertNotIn("first_failure", node)
-                    self.assertIsNone(public_first_failure(receipt))
-                    continue
-                self.assertEqual(legacy, node.get("first_failure"))
-                self.assertEqual(legacy, public_first_failure(receipt))
-                self.assertIn("album_capture", receipt, "Projection must not mutate the raw evidence.")
-                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(node))
-                changed = copy.deepcopy(summary)
-                changed_row = changed["population"]["observed"][0]
-                changed_row["first_failure"] = changed_row["attempts"][0]["first_failure"] = node["first_failure"]
-                self.assertEqual(expected, environment_limit_evidence(
-                    changed, changed_row, [resource], runner_hosted=True, policy_version=5))
-                self.assertEqual(changed, ci_summary.parse_summary(json.dumps(changed)))
-                reason = {"poll-order": "invalid poll times", "pause-order": "invalid pause ordering",
-                    "private-field": "invalid fields"}[defect]
-                with self.assertRaisesRegex(ci_summary.ContractError, "^album capture diagnostic: " + reason + "$"):
-                    scan_diagnostic_json(json.dumps({"first_failure": receipt}).encode())
-
-    def test_album_capture_diagnostics_round_trip_without_changing_failure_or_legacy_projection(self):
-        from ci_failure_diagnostics import environment_failure_projection, scan_diagnostic_json
-        summary, _ = hosted_album_timeout_summary()
-        for identity in summary["population"]["declared"]:
-            identity.update(key="filter-album")
-            identity["dimensions"]["suite"] = "filter-album"
-        row = summary["population"]["observed"][0]
-        legacy = copy.deepcopy(row["first_failure"])
-        row["first_failure"]["album_capture"] = album_capture_diagnostic()
-        read = ci_summary.parse_summary(json.dumps(summary))
-        self.assertEqual(summary, read)
-        self.assertEqual("failed", read["population"]["observed"][0]["outcome"])
-        self.assertEqual(environment_failure_projection(legacy), environment_failure_projection(row["first_failure"]))
-        self.assertIn("album-play-1/frameSynchronized", ci_summary.render_markdown(read))
-        scan_diagnostic_json(json.dumps({"nested": [read]}).encode())
-        mismatched = copy.deepcopy(summary)
-        mismatched["population"]["observed"][0]["first_failure"]["album_capture"]["fixture"] = "b"
-        with self.assertRaisesRegex(ci_summary.ContractError, "^album capture diagnostic: fixture differs from strict identity$"):
-            ci_summary.parse_summary(mismatched)
-        row["first_failure"].pop("album_capture")
-        self.assertEqual(summary, ci_summary.parse_summary(json.dumps(summary)))
-
-    def test_album_capture_diagnostics_reject_private_unbounded_and_misbound_fields(self):
-        from ci_failure_diagnostics import scan_diagnostic_json, unavailable_first_failure
-        receipt = first_failure_receipt(gate=True)
-        receipt["album_capture"] = album_capture_diagnostic()
-        cases = [
-            (("raw_probe",), "private", "invalid fields"),
-            (("schema_version",), 2, "invalid version"),
-            (("site",), "private.png", "invalid site"),
-            (("probe",), "private", "invalid probe"),
-            (("fixture",), "private", "invalid fixture"),
-            (("rejections",), ["private"], "invalid rejections"),
-            (("rejections",), ["phase", "phase"], "invalid rejections"),
-            (("poll_count",), True, "invalid poll count"),
-            (("polls",), [[0.8, 0.9]] * 17, "invalid polls"),
-            (("polls",), [[0.9, 0.8], [1, 1.1]], "invalid poll times"),
-            (("polls",), [[0.8, float("inf")], [1, 1.1]], "invalid poll times"),
-            (("polls",), [[0.8], [1, 1.1]], "invalid poll times"),
-            (("polls",), [[1, 1.1], [0.8, 0.9]], "invalid poll times"),
-            (("polls_truncated",), True, "invalid poll retention"),
-            (("window_seconds",), 0, "invalid window"),
-            (("settle_seconds",), 5, "invalid settle"),
-            (("baseline",), {}, "invalid baseline"),
-            (("baseline", "history"), "private", "invalid baseline"),
-            (("pause",), {}, "invalid pause"),
-            (("pause", "requested_seconds"), "private", "invalid pause"),
-            (("pause", "returned_seconds"), -1, "invalid pause ordering"),
-            (("pause", "observed_seconds"), -1, "invalid pause ordering"),
-            (("members",), ["asset-private"], "invalid members"),
-            (("members",), ["A6"], "invalid members"),
-            (("unmapped_member_count",), 65, "invalid member count"),
-        ]
-        for path, value, reason in cases:
-            changed = copy.deepcopy(receipt)
-            target = changed["album_capture"]
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = value
-            with self.subTest(path=path, value=value), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^album capture diagnostic: " + reason + "$"):
-                scan_diagnostic_json(json.dumps({"first_failure": changed}).encode())
-        changed = unavailable_first_failure("xctest")
-        changed["album_capture"] = album_capture_diagnostic()
-        with self.assertRaisesRegex(ci_summary.ContractError, "^album capture diagnostic: requires capture gate$"):
-            scan_diagnostic_json(json.dumps({"first_failure": changed}).encode())
-
-    def test_album_diagnostic_extensions_are_strict_only_and_native_tap_is_closed(self):
-        from ci_failure_diagnostics import scan_diagnostic_json
-        summary, _ = hosted_album_timeout_summary()
-        row = summary["population"]["observed"][0]
-        receipt = row["first_failure"]
-        receipt.pop("gate")
-        receipt.update(step="select", element="slideshow.control.next.button", action="tap",
-            native_tap_failure="event-synthesis")
-        with self.assertRaisesRegex(ci_summary.ContractError, "^album diagnostics require strict filter-album identity$"):
-            ci_summary.parse_summary(summary)
-        for identity in summary["population"]["declared"]:
-            identity.update(key="filter-album")
-            identity["dimensions"]["suite"] = "filter-album"
-        for native in ("event-synthesis", "snapshot-timeout", "application-process"):
-            receipt["native_tap_failure"] = native
-            self.assertEqual(summary, ci_summary.parse_summary(summary))
-            self.assertIn("native-tap=" + native, ci_summary.render_markdown(summary))
-        for key, value, message in (("native_tap_failure", "private", "invalid native tap failure"),
-                ("step", "wait-scene", "native tap requires Next tap context")):
-            changed = copy.deepcopy(receipt)
-            changed[key] = value
-            with self.subTest(key=key), self.assertRaisesRegex(ci_summary.ContractError, "^first failure: " + message + "$"):
-                scan_diagnostic_json(json.dumps({"first_failure": changed}).encode())
-
-    def test_unknown_ui_failure_duration_stays_red_and_cannot_supply_a_total_or_yellow_proof(self):
-        from ci_health import observation_metrics
-        summary = archive_download_summary()
-        summary.pop("archive_download")
-        identity = summary["population"]["declared"][0]
-        row = ci_summary.observation(identity, "failed", None, exit_code=65)
-        summary["population"]["observed"] = [row]
-        summary["status"] = "failed"
-        self.assertEqual(summary, ci_summary.parse_summary(json.dumps(summary)))
-        self.assertIn("| failed | unknown |", ci_summary.render_markdown(summary))
-        self.assertIsNone(observation_metrics([row])["test_duration_seconds"])
-        self.assertEqual(1, observation_metrics([row])["first_attempt_failures"])
-        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
-        verdict = ci_verdict.evaluate_population(summary, [identity], policy, environment="fixture")
-        self.assertEqual("failed", verdict["status"])
-        self.assertEqual([], verdict["missing_executed"])
-        for defect in ("passed", "skipped", "host", "strict", "numeric-total", "numeric-attempt"):
-            bad = copy.deepcopy(summary)
-            entry = bad["population"]["observed"][0]
-            if defect in {"passed", "skipped"}:
-                entry["outcome"] = entry["attempts"][0]["outcome"] = defect
-            elif defect in {"host", "strict"}:
-                entry["identity"]["kind"] = defect
-                entry["identity"]["dimensions"] = {} if defect == "host" else {
-                    "device": "iphone", "configuration": "Debug", "suite": "smoke", "scenario": "normal", "fixture": "a"}
-            elif defect == "numeric-total":
-                entry["duration_seconds"] = 0
-            else:
-                entry["attempts"][0]["duration_seconds"] = 0
-            with self.subTest(defect=defect), self.assertRaisesRegex(ci_summary.ContractError,
-                    "unknown duration requires a failed UI result|total duration must account for every attempt"):
-                ci_summary.parse_summary(bad)
-        from ci_failure_diagnostics import environment_limit_evidence
-        yellow, _ = hosted_v5_summary(ui=True, tool=True)
-        entry = yellow["population"]["observed"][0]
-        proof = environment_limit_evidence(yellow, entry, [], runner_hosted=True, policy_version=5)
-        entry["duration_seconds"] = entry["attempts"][0]["duration_seconds"] = None
-        self.assertIsNone(environment_limit_evidence(yellow, entry, [], runner_hosted=True, policy_version=5))
-        entry["environment_limit"] = entry["attempts"][0]["environment_limit"] = proof
-        with self.assertRaisesRegex(ci_summary.ContractError, "unknown duration requires a failed UI result"):
-            ci_summary.parse_summary(yellow)
-
-    def test_official_discovery_keeps_missing_failed_duration_bound_to_null(self):
-        from ci_ui_discovery import retain_incomplete_discovery
-        summary = discovery_summary()
-        summary["status"] = "failed"
-        evidence = summary["compiled_evidence"]
-        evidence["first_exit_code"] = 65
-        node = evidence["official_tests"]["testNodes"][0]["children"][0]
-        node.update(result="Failed", children=[{"nodeType": "Failure Message", "name": "Test crashed with signal term."}])
-        node.pop("durationInSeconds")
-        summary["population"]["observed"] = []
-        retain_incomplete_discovery(summary)
-        self.assertEqual(summary, ci_summary.parse_summary(summary))
-        self.assertIsNone(summary["population"]["observed"][0]["duration_seconds"])
-        for seconds in (0, 1):
-            bad = copy.deepcopy(summary)
-            entry = bad["population"]["observed"][0]
-            entry["duration_seconds"] = entry["attempts"][0]["duration_seconds"] = seconds
-            with self.subTest(seconds=seconds), self.assertRaisesRegex(ci_summary.ContractError,
-                    "official discovery and first observed outcome differ"):
-                ci_summary.parse_summary(bad)
-
-    def test_three_starved_waits_require_exact_timeout_and_functional_evidence(self):
-        from ci_failure_diagnostics import (classify_messages, environment_limit_evidence,
-            public_failure_messages, validate_environment_limit)
-        cases = (
-            ("The control bar is not hidden yet; cannot verify the first wake.",
-             "wait-scene", "slideshow.control.settings.button", "playback"),
-            ("Late image preparation must turn Autoplay off.",
-             "select", "settings.playback.autoPlay.toggle", "playback-settings"),
-            ("rotation-landscape-stable did not stabilize within the ",
-             "capture-frame", "app-window", "playback"))
-        for message, step, element, surface in cases:
-            summary, resource = hosted_v5_summary()
-            row = summary["population"]["observed"][0]
-            messages = public_failure_messages(['failed: caught error: "Failure(message: \\"' + message + '\\")"'])
-            self.assertEqual([message], messages)
-            for target in (row, row["attempts"][0]):
-                target.update(classify_messages(messages), failure_messages=messages)
-            receipt = row["first_failure"]
-            receipt.update(step=step, element=element)
-            receipt["state"].update(surface=surface, autoplay="off")
-            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
-            with self.subTest(message=message):
-                self.assertIsNotNone(proof)
-                row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-                self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
-                negatives = [("deadline_seconds", 0), ("deadline_seconds", None),
-                    ("wait_elapsed_seconds", 4.99), ("wait_elapsed_seconds", None),
-                    ("scene_status", "BLACK"), ("scene_status", "BLANK"), ("surface", "unknown")]
-                if step == "select":
-                    negatives += [("autoplay", "on"), ("autoplay", "unknown"),
-                        ("step", "wait-scene"), ("element", "settings.playback.showExif.toggle")]
-                elif step == "capture-frame":
-                    negatives += [("scene_status", "UNRECOGNIZABLE"), ("scene_status", "TRANSITION"),
-                        ("step", "history-readback"), ("element", "simulator")]
-                else:
-                    negatives += [("control_bar", "visible"), ("control_bar", "unknown"),
-                        ("deadline_seconds", 0.59)]
-                    boundary = copy.deepcopy(summary)
-                    boundary_row = boundary["population"]["observed"][0]
-                    boundary_row["first_failure"]["timing"]["deadline_seconds"] = 0.6
-                    boundary_proof = environment_limit_evidence(boundary, boundary_row, [resource],
-                        runner_hosted=True, policy_version=5)
-                    self.assertIsNotNone(boundary_proof)
-                    boundary_row["environment_limit"] = boundary_row["attempts"][0]["environment_limit"] = boundary_proof
-                    ci_summary.parse_summary(boundary)
-                    missing = copy.deepcopy(summary)
-                    missing_row = missing["population"]["observed"][0]
-                    missing_row["first_failure"]["state"].pop("control_bar")
-                    self.assertIsNone(environment_limit_evidence(missing, missing_row, [resource],
-                        runner_hosted=True, policy_version=5))
-                for field, value in negatives:
-                    changed = copy.deepcopy(proof)
-                    changed["failure"][field] = value
-                    with self.subTest(field=field, value=value), self.assertRaisesRegex(ci_summary.ContractError,
-                            "^environment limit: failure is not an eligible timing wait$"):
-                        validate_environment_limit(changed)
-                changed = copy.deepcopy(proof)
-                changed["resources"]["failure_samples"] = []
-                with self.assertRaisesRegex(ci_summary.ContractError,
-                        "^environment limit: insufficient starvation evidence$"):
-                    validate_environment_limit(changed)
-                if step == "select":
-                    changed = copy.deepcopy(proof)
-                    changed["failure"].pop("autoplay")
-                    with self.assertRaisesRegex(ci_summary.ContractError,
-                            "^environment limit: failure is not an eligible timing wait$"):
-                        validate_environment_limit(changed)
-                    changed = copy.deepcopy(summary)
-                    changed["population"]["observed"][0]["first_failure"]["state"]["autoplay"] = "on"
-                    with self.assertRaisesRegex(ci_summary.ContractError,
-                            "^environment limit differs from scoped first failure evidence$"):
-                        ci_summary.parse_summary(changed)
-                # No adjacent rotation capture gains the new capture-frame exception.
-                if step == "capture-frame":
-                    for other in ("rotation-start-portrait", "rotation-portrait-stable", "layout-landscape-multi"):
-                        changed = copy.deepcopy(proof)
-                        other_message = other + " did not stabilize within the "
-                        changed.update(classify_messages([other_message]), failure_messages=[other_message])
-                        with self.subTest(other=other), self.assertRaisesRegex(ci_summary.ContractError,
-                                "^environment limit: failure is not an eligible timing wait$"):
-                            validate_environment_limit(changed)
-
-    def test_v5_functional_guards_and_scope_fail_closed(self):
-        from ci_failure_diagnostics import (classify_messages, environment_limit_evidence,
-            environment_failure_projection, validate_environment_limit, scan_diagnostic_json)
-        for message, step, element, field, value in (
-                ("After pausing, the control value must be play.", "wait-scene", "slideshow.control.playPause.button", "scene_status", "BLACK"),
-                ("After pausing, the control value must be play.", "wait-scene", "slideshow.control.playPause.button", "scene_status", "BLANK"),
-                ("Playback page must provide play/pause.", "select", "slideshow.control.playPause.button", "control_bar", "visible"),
-                ("Playback page must provide play/pause.", "select", "slideshow.control.playPause.button", "surface", "mode"),
-                ("Playback page must provide play/pause.", "select", "app-window", "surface", "mode"),
-                ("Playback page must provide play/pause.", "select", "BackButton", "surface", "playback-settings"),
-                ("A configured cold launch must go straight to the playback page.", "launch-app", "firstboot.serverURL.field", "surface", "firstboot"),
-                ("After pausing, the control value must be play.", "wait-scene", "slideshow.control.playPause.button", "surface", "unknown")):
-            summary, resource = hosted_v5_summary()
-            row = summary["population"]["observed"][0]
-            for target in (row, row["attempts"][0]):
-                target.update(classify_messages([message]), failure_messages=[message])
-            receipt = row["first_failure"]
-            receipt.update(step=step, element=element)
-            receipt["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
-            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
-            self.assertIsNotNone(proof, (message, field))
-            receipt["state"][field] = value
-            proof["failure"] = environment_failure_projection(receipt, policy_version=5)
-            with self.subTest(guard=(element, field, value)), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^environment limit: failure is not an eligible timing wait$"):
-                validate_environment_limit(proof)
-        for mutation in ("ci-ui", "pull_request", "local", "not-hosted", "job", "ui-timing"):
-            summary, resource = hosted_v5_summary(ui=mutation == "ui-timing")
-            row = summary["population"]["observed"][0]
-            if mutation == "ci-ui":
-                summary["source"]["workflow_path"] = ".github/workflows/ci-ui.yml"
-            elif mutation in {"pull_request", "local"}:
-                summary["source"]["event"] = mutation
-            elif mutation == "job":
-                summary["run"]["job"] = "other-job"
-            with self.subTest(scope=mutation):
-                self.assertIsNone(environment_limit_evidence(summary, row, [resource],
-                    runner_hosted=mutation != "not-hosted", policy_version=5))
-        for messages in (["Failed to get matching snapshots: Timed out while evaluating UI query",
-                          "Application 'com.331works.immichSlides' does not have a process ID"],
-                         ["Failed to get matching snapshots: Timed out while evaluating UI query",
-                          "After pausing, the control value must be play."],
-                         ["After pausing, the control value must be play.",
-                          "Album capture preparation must observe paused playback after one Pause."]):
-            summary, resource = hosted_v5_summary()
-            row = summary["population"]["observed"][0]
-            for target in (row, row["attempts"][0]):
-                target.update(classify_messages(messages), failure_messages=messages)
-            with self.subTest(mixed=messages):
-                self.assertIsNone(environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5))
-        for data in (b'{"failure_messages":["private"]', b'{"failure\\u005fmessages":["private"]'):
-            with self.subTest(malformed=data), self.assertRaisesRegex(ValueError, "^invalid failure diagnostic JSON$"):
-                scan_diagnostic_json(data)
-        pid_message = "Failed to terminate com.331works.immichSlides:1234567890: Failed to terminate com.331works.immichSlides:0"
-        scan_diagnostic_json(json.dumps({"failure_messages": [pid_message]}).encode())
-        with self.assertRaisesRegex(ValueError, "^failure messages: unreviewed public message$"):
-            scan_diagnostic_json(json.dumps({"failure_messages": [pid_message.replace("1234567890", "12345678901")]}).encode())
-
-    def test_v5_short_native_termination_keeps_exact_tool_boundaries(self):
-        from ci_failure_diagnostics import (environment_limit_evidence, failure_messages_diagnostics,
-            public_failure_messages, scan_diagnostic_json, xctest_tool_class)
-        import ci_report
-        patterns = (("Failed to terminate com.331works.immichSlides:123", "process_lifetime"),)
-        for message, failure_class in patterns:
-            self.assertEqual(xctest_tool_class(message), failure_class)
-            self.assertEqual(public_failure_messages([message]), [message])
-            near_misses = [message + " unrelated", message + "\n", "XCTAssertTrue failed - " + message,
-                "App assertion: snapshot must match " + message,
-                "Test crashed with App frame: " + message]
-            if failure_class == "process_lifetime":
-                near_misses.extend((message.replace("immichSlides", "other"), message.replace("123", "12345678901"),
-                                    message.replace("123", "-1"), message.replace("123", "pid")))
-            for near_miss in near_misses:
-                with self.subTest(near_miss=near_miss):
-                    self.assertIsNone(xctest_tool_class(near_miss))
-                    projected = public_failure_messages([near_miss])
-                    self.assertTrue(all(xctest_tool_class(item) is None for item in projected))
-            for ui in (False, True):
-                with self.subTest(message=message, ui=ui):
-                    summary, _ = hosted_v5_summary(ui=ui, tool=True)
-                    row = summary["population"]["observed"][0]
-                    for target in (row, row["attempts"][0]):
-                        target.update(failure_messages=[message], **failure_messages_diagnostics([message]))
-                    proof = environment_limit_evidence(summary, row, [], runner_hosted=True, policy_version=5)
-                    self.assertIsNotNone(proof)
-                    self.assertEqual((proof["kind"], proof["failure_class"]), ("xctest-tool", failure_class))
-                    row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-                    ci_summary.parse_summary(summary)
-                    scan_diagnostic_json(json.dumps(summary).encode())
-                    verdict = ci_verdict.evaluate_population(summary, summary["population"]["declared"],
-                        {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []},
-                        environment="fixture" if ui else "hermetic")
-                    self.assertEqual(verdict["status"], "environment-limited")
-                    self.assertIn(message, ci_summary.render_markdown(summary))
-                    self.assertIsNone(environment_limit_evidence(summary, row, [], runner_hosted=False, policy_version=5))
-                    changed = copy.deepcopy(summary)
-                    changed["source"].update(workflow_path=".github/workflows/ci-ui.yml", event="pull_request")
-                    self.assertIsNone(environment_limit_evidence(changed, row, [], runner_hosted=True, policy_version=5))
-                    missing = copy.deepcopy(summary)
-                    missing["population"]["observed"][0]["attempts"][0].pop("failure_messages")
-                    with self.assertRaises(ValueError):
-                        ci_summary.parse_summary(missing)
-                    if not ui:
-                        method = {"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": "Failed",
-                            **{key: row[key] for key in ("failure_phase", "failure_class", "failure_messages")}}
-                        phase = {"identity": row["identity"], "exit_code": 65, "build_operations": 0, "products_unchanged": True,
-                            "log_present": True, "official_methods": [method],
-                            "official_summary": {"totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0}}
-                        observed, absent = ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
-                        self.assertEqual(absent, [])
-                        self.assertEqual(observed[0]["environment_limit"], proof)
-                        phase["official_methods"][0]["failure_messages"] = [message, "App timeline:"]
-                        with self.assertRaises(ValueError):
-                            ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
-
-    def test_snapshot_and_nonexact_termination_keep_their_public_diagnostics_and_red_verdict(self):
-        from ci_failure_diagnostics import (attach_native_tap_failure, environment_limit_evidence,
-            failure_messages_diagnostics, public_failure_messages, validate_failure_messages, xctest_tool_class)
-        for raw, public, kind in (
-                ("Failed to get matching snapshot", "Failed to get matching snapshot", "snapshot_query"),
-                ("Failed to get matching snapshot: Lost connection to the application (pid 123).",
-                 "Failed to get matching snapshot", "snapshot_query"),
-                ("Failed to terminate com.331works.immichSlides:123: unexpected detail",
-                 "Failed to terminate com.331works.immichSlides:", "process_lifetime"),
-                ("Failed to terminate com.331works.immichSlides:12345678901",
-                 "Failed to terminate com.331works.immichSlides:", "process_lifetime"),
-                ("Failed to terminate com.331works.other:123", "[unrecognized XCTest failure]", "unknown")):
-            with self.subTest(raw=raw):
-                self.assertIsNone(xctest_tool_class(raw))
-                messages = public_failure_messages([raw])
-                self.assertEqual(messages, [public])
-                validate_failure_messages(messages)
-                self.assertEqual(failure_messages_diagnostics(messages),
-                                 {"failure_phase": "unknown", "failure_class": kind})
-                summary, _ = hosted_v5_summary(tool=True)
-                row = summary["population"]["observed"][0]
-                for target in (row, row["attempts"][0]):
-                    target.update(failure_messages=messages, **failure_messages_diagnostics(messages))
-                self.assertIsNone(environment_limit_evidence(summary, row, [], runner_hosted=True, policy_version=5))
-        key = "StrictE2EFilterIOSUITests/testFilterAlbumTargetMembers"
-        node = {"nodeIdentifier": key, "first_failure": {"source": "xctest", "step": "select",
-                "element": "slideshow.control.next.button", "action": "tap"}}
-        attach_native_tap_failure([node], {key: ["Failed to get matching snapshot"]})
-        self.assertNotIn("native_tap_failure", node["first_failure"])
-
-    def test_native_method_allowance_is_public_only_with_an_exact_numeric_grammar_and_stays_red(self):
-        from ci_failure_diagnostics import (environment_limit_evidence, failure_messages_diagnostics,
-            public_failure_messages, scan_diagnostic_json, validate_failure_messages, xctest_tool_class)
-        for allowance in ("0 minutes", "1 minute", "2 minutes", "1234567890 minutes"):
-            message = f"Test exceeded execution time allowance of {allowance}"
-            with self.subTest(allowance=allowance):
-                self.assertEqual(public_failure_messages([message]), [message])
-                validate_failure_messages([message])
-                scan_diagnostic_json(json.dumps({"failure_messages": [message]}).encode())
-                self.assertIsNone(xctest_tool_class(message))
-                self.assertEqual(failure_messages_diagnostics([message]),
-                                 {"failure_phase": "unknown", "failure_class": "unknown"})
-                summary, _ = hosted_v5_summary(tool=True)
-                row = summary["population"]["observed"][0]
-                for target in (row, row["attempts"][0]):
-                    target.update(failure_messages=[message], **failure_messages_diagnostics([message]))
-                self.assertIsNone(environment_limit_evidence(summary, row, [], runner_hosted=True, policy_version=5))
-        template = "Test exceeded execution time allowance of {} minutes"
-        rejected = [template.format(value) for value in ("private", "120 private", "", "-1", "+1", "1.5", "１２０",
-                                                           "120\n", "12345678901")]
-        rejected += [template.format("120") + suffix for suffix in (".", " private", "\n")]
-        rejected += ["XCTAssertTrue failed - " + template.format("120"), "Unreviewed native private failure",
-                     "Exceeded execution time allowance of 120 seconds",
-                     "Test exceeded execution time allowance of 120 seconds"]
-        for message in rejected:
-            with self.subTest(message=message):
-                self.assertEqual(public_failure_messages([message]), ["[unrecognized XCTest failure]"])
-                with self.assertRaisesRegex(ValueError, "unreviewed public message"):
-                    validate_failure_messages([message])
-                with self.assertRaisesRegex(ValueError, "unreviewed public message"):
-                    scan_diagnostic_json(json.dumps({"failure_messages": [message]}).encode())
-
-    def test_v5_readers_bind_complete_messages_and_keep_functional_or_missing_evidence_red(self):
-        from ci_failure_diagnostics import environment_limit_evidence, scan_diagnostic_json
-        for ui, tool in ((False, False), (False, True), (True, True)):
-            summary, resource = hosted_v5_summary(ui=ui, tool=tool)
-            row = summary["population"]["observed"][0]
-            proof = environment_limit_evidence(summary, row, [] if tool else [resource],
-                                               runner_hosted=True, policy_version=5)
-            with self.subTest(ui=ui, tool=tool):
-                self.assertIsNotNone(proof)
-                row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-                self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
-                scan_diagnostic_json(json.dumps(summary).encode())
-                verdict = ci_verdict.evaluate_population(summary, summary["population"]["declared"],
-                    {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []},
-                    environment="fixture" if ui else "hermetic")
-                self.assertEqual("environment-limited", verdict["status"])
-                for messages in ([], ["Playback page must provide play/pause."]):
-                    changed = copy.deepcopy(summary)
-                    bad = changed["population"]["observed"][0]
-                    bad["failure_messages"] = bad["attempts"][0]["failure_messages"] = messages
-                    reason = ("failure messages: expected a bounded complete failure list" if not messages else
-                              "environment limit differs from scoped first failure evidence")
-                    with self.subTest(messages=messages), self.assertRaisesRegex(ValueError, "^" + reason + "$"):
-                        ci_summary.parse_summary(changed)
-                changed = copy.deepcopy(summary)
-                changed["population"]["observed"][0]["environment_limit"]["policy_version"] = 6
-                with self.assertRaisesRegex(ValueError, "unsupported policy version"):
-                    ci_summary.parse_summary(changed)
-        summary, resource = hosted_v5_summary()
-        row = summary["population"]["observed"][0]
-        row["first_failure"]["native_activity_seconds"] = dict.fromkeys((
-            "pre_event_idle", "find_window", "synthesize_event", "post_event_idle", "ax_root_acquisition"), 60.05)
-        for mutation in ("missing-samples", "idle", "validator", "not-elapsed"):
-            changed, sample = copy.deepcopy(row), copy.deepcopy(resource)
-            if mutation == "missing-samples":
-                sample["failure_samples"] = []
-            elif mutation == "idle":
-                sample["failure_samples"][0]["idle_percent"] = 6
-            elif mutation == "validator":
-                changed["validator_failure_message"] = "[redacted validator failure]"
-            elif mutation == "not-elapsed":
-                changed["first_failure"]["timing"]["wait_elapsed_seconds"] = 3
-            with self.subTest(mutation=mutation):
-                self.assertIsNone(environment_limit_evidence(summary, changed, [sample], runner_hosted=True, policy_version=5))
-        for message in ("Failed to terminate com.331works.immichSlides:123: Failed to terminate com.331works.immichSlides:0",
-                "Application 'com.331works.immichSlides' does not have a process ID",
-                "Failed to launch com.331works.immichSlides: Timed out while launching application via Xcode"):
-            summary, _ = hosted_v5_summary(ui=True, tool=True)
-            row = summary["population"]["observed"][0]
-            row["failure_class"] = row["attempts"][0]["failure_class"] = "process_lifetime"
-            row["failure_messages"] = row["attempts"][0]["failure_messages"] = [message]
-            proof = environment_limit_evidence(summary, row, [], runner_hosted=True, policy_version=5)
-            self.assertIsNotNone(proof, message)
-            row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-            self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
-            for suffix in (" unrelated failure", "\nApp timeline:"):
-                changed = copy.deepcopy(summary)
-                bad = changed["population"]["observed"][0]
-                bad["failure_messages"] = bad["attempts"][0]["failure_messages"] = [message + suffix]
-                with self.subTest(suffix=suffix), self.assertRaisesRegex(ValueError, "^failure messages: unreviewed public message$"):
-                    ci_summary.parse_summary(changed)
-        from ci_failure_diagnostics import classify_messages
-        for message, step, eligible in (
-                ("Playback page must provide play/pause.", "select", True),
-                ("After auto-advance, the playback controls must be revealable.", "select", True),
-                ("Focus must reach play/pause.", "focus", True),
-                ("Tapping settings must open the settings page.", "query-element", True),
-                ("rotation-landscape-stable did not stabilize within the ", "wait-scene", True),
-                ("Playback page must provide play/pause.", "history-readback", False),
-                ("The next photo after pause must show a different public pattern", "query-element", False),
-                ("Screenshot must not be empty:", "query-element", False),
-                ("Album Next must advance the paused scene within the playback capture budget.", "wait-scene", False),
-                ("Next must be tappable twice right after entering the slideshow, before old image requests finish.", "wait-scene", False),
-                ("Chose filter but reached the playback page, so the mode card tap did not register.", "mode-card", False),
-                ("Before rotating, the play button value must be pause (playing),", "wait-scene", False),
-                ("The playback interval must be 5 seconds.", "settings-readback", False),
-                ("Automatic photo change occurred before T-2;", "wait-scene", False),
-                ("The playback index probe is empty, so autoplay and retained-history cannot be proven.", "query-element", False),
-                ("App timeline:", "wait-scene", False)):
-            summary, resource = hosted_v5_summary()
-            row = summary["population"]["observed"][0]
-            checked_proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
-            diagnostics = classify_messages([message])
-            for target in (row, row["attempts"][0]):
-                target.update(diagnostics, failure_messages=[message])
-            row["first_failure"]["step"] = step
-            row["first_failure"]["state"]["scene_status"] = "UNRECOGNIZABLE"
-            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
-            with self.subTest(taxonomy=message):
-                self.assertEqual(eligible, proof is not None)
-                if proof:
-                    row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-                    ci_summary.parse_summary(summary)
-                else:
-                    from ci_failure_diagnostics import environment_failure_projection, validate_environment_limit
-                    checked_proof.update(diagnostics, failure_messages=[message],
-                        failure=environment_failure_projection(row["first_failure"], policy_version=5))
-                    row["environment_limit"] = row["attempts"][0]["environment_limit"] = checked_proof
-                    with self.assertRaisesRegex(ci_summary.ContractError,
-                            "^environment limit: failure is not an eligible timing wait$"):
-                        ci_summary.parse_summary(summary)
-        # This generic reader formerly rejected strict v1-v4 failures; preserve that interpretation.
-        summary, resource = hosted_timeout_summary()
-        row = summary["population"]["observed"][0]
-        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=4)
-        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-        verdict = ci_verdict.evaluate_population(summary, summary["population"]["declared"],
-            {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}, environment="hermetic")
-        self.assertEqual("failed", verdict["status"])
-
-    def test_late_image_preparation_preserves_legacy_red_and_v5_timing_boundaries(self):
-        from ci_failure_diagnostics import (PREFIX_RULES, FIRST_FAILURE_STEPS, FIRST_FAILURE_ELEMENTS,
-            classify_messages, environment_timing, environment_failure_projection)
-        mappings = [entry for entry in PREFIX_RULES if entry[0].startswith((
-            "Late image preparation", "Late image cold launch", "Held response budget",
-            "Late image held asset", "Late image fixture control"))]
-        for prefix, phase, kind in mappings:
-            diagnostic = classify_messages(["failed - " + prefix])
-            self.assertEqual(diagnostic, {"failure_phase": phase, "failure_class": kind})
-            # Exercise reader rejection even with a foreground App and a fully exhausted wait.
-            failure = environment_failure_projection(first_failure_receipt(native=True))
-            failure.update(surface="playback", wait_elapsed_seconds=25, deadline_seconds=13)
-            for version in (1, 2, 3, 4):
-                for step in FIRST_FAILURE_STEPS:
-                    for element in FIRST_FAILURE_ELEMENTS:
-                        failure.update(step=step, element=element)
-                        self.assertFalse(environment_timing(failure, phase, kind, policy_version=version),
-                                         (prefix, version, step, element))
-            # Summaries retain their old version and failed outcome; no new enum is needed.
-            summary = valid_summary()
-            entry = summary["population"]["observed"][0]
-            entry.update(outcome="failed", **diagnostic)
-            entry["attempts"][0].update(outcome="failed", exit_code=65, **diagnostic)
-            self.assertEqual(ci_summary.parse_summary(summary)["population"]["observed"][0]["outcome"], "failed")
-            from ci_failure_diagnostics import environment_limit_evidence
-            summary, resource = hosted_v5_summary()
-            row = summary["population"]["observed"][0]
-            for target in (row, row["attempts"][0]):
-                target.update(diagnostic, failure_messages=[prefix])
-            row["first_failure"]["step"] = "focus" if kind == "focus" else "query-element"
-            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
-            self.assertEqual(kind in {"navigation", "focus"}, proof is not None, prefix)
-
-    def test_v5_album_gate_retains_every_functional_exclusion(self):
-        from ci_failure_diagnostics import environment_limit_evidence, environment_failure_projection, validate_environment_limit
-        summary, resource = hosted_album_timeout_summary()
-        row = summary["population"]["observed"][0]
-        messages = ["Album capture preparation must reach a complete paused scene within the playback capture budget."]
-        row["failure_messages"] = row["attempts"][0]["failure_messages"] = messages
-        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
-        self.assertIsNotNone(proof)
-        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-        ci_summary.parse_summary(summary)
-        for label, receipt, message in album_capture_gate_rejections(row["first_failure"]):
-            changed = copy.deepcopy(proof)
-            changed["failure"] = environment_failure_projection({key: value for key, value in receipt.items() if key != "gate"}, policy_version=5)
-            if "gate" in receipt:
-                changed["failure"]["gate"] = copy.deepcopy(receipt["gate"])
-            with self.subTest(gate=label), self.assertRaisesRegex(ci_summary.ContractError, "^" + re.escape(message) + "$"):
-                validate_environment_limit(changed)
-
-    def test_password_prompt_timing_requires_new_policy_and_exact_mode_evidence(self):
-        from ci_failure_diagnostics import (ENVIRONMENT_WAIT_STEPS_V3, ENVIRONMENT_WAIT_STEPS_V4,
-            environment_limit_evidence, validate_environment_limit)
-        self.assertEqual({**ENVIRONMENT_WAIT_STEPS_V3,
-            **{("mode_selection", "navigation", "save-password-prompt", element): "mode"
-               for element in ("mode.random.button", "mode.filtered.button")}}, ENVIRONMENT_WAIT_STEPS_V4)
-        for element in ("mode.random.button", "mode.filtered.button"):
-            summary, resource = hosted_mode_departure_summary("mode_selection")
-            row = summary["population"]["observed"][0]
-            row["first_failure"].update(step="save-password-prompt", element=element)
-            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=4)
-            with self.subTest(element=element):
-                self.assertIsNotNone(proof)
-                row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-                parsed = ci_summary.parse_summary(summary)
-                self.assertEqual(proof, parsed["population"]["observed"][0]["environment_limit"])
-                self.assertEqual("failed", parsed["population"]["observed"][0]["outcome"])
-                for path, value, message in (
-                        *((('policy_version',), version, "failure is not an eligible timing wait") for version in (1, 2, 3)),
-                        (("failure", "element"), "mode.continue.button", "failure is not an eligible timing wait"),
-                        (("failure", "surface"), "firstboot", "failure is not an eligible timing wait"),
-                        (("failure_phase",), "playback_entry", "failure is not an eligible timing wait"),
-                        (("failure_class",), "control_state", "failure is not an eligible timing wait"),
-                        (("resources", "failure_samples"), [], "insufficient starvation evidence")):
-                    changed = copy.deepcopy(proof)
-                    target = changed
-                    for key in path[:-1]:
-                        target = target[key]
-                    target[path[-1]] = value
-                    with self.subTest(path=path, value=value), self.assertRaisesRegex(ci_summary.ContractError,
-                            "^environment limit: " + message + "$"):
-                        validate_environment_limit(changed)
-
-    def test_mode_departure_policy_preserves_each_retained_version(self):
-        from ci_failure_diagnostics import (ENVIRONMENT_WAIT_STEPS, ENVIRONMENT_WAIT_STEPS_V3,
-            environment_limit_evidence, scan_diagnostic_json, validate_environment_limit)
-        self.assertEqual({**ENVIRONMENT_WAIT_STEPS,
-            **{(phase, "navigation", "mode-departure", "mode.continue.button"): "mode"
-               for phase in ("mode_selection", "playback_entry")}}, ENVIRONMENT_WAIT_STEPS_V3)
-        for phase in ("mode_selection", "playback_entry"):
-            summary, resource = hosted_mode_departure_summary(phase)
-            row = summary["population"]["observed"][0]
-            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=3)
-            with self.subTest(phase=phase):
-                self.assertIsNotNone(proof)
-                row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-                self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
-                scan_diagnostic_json(json.dumps(summary).encode())
-                for version in (1, 2):
-                    with self.subTest(legacy_version=version), self.assertRaisesRegex(ci_summary.ContractError,
-                            "^environment limit: failure is not an eligible timing wait$"):
-                        validate_environment_limit(dict(proof, policy_version=version))
-        for version in (1, 2, 3, 4):
-            summary, resource = hosted_mode_departure_summary("mode_selection")
-            row = summary["population"]["observed"][0]
-            row["first_failure"]["step"] = "mode-continue"
-            with self.subTest(continue_version=version):
-                proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=version)
-                self.assertIsNotNone(proof)
-                row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-                self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
-        for phase, version in ((phase, version) for phase in ("transition", "incomingFromLoading") for version in (3, 4)):
-            summary, resource = hosted_album_timeout_summary()
-            row = summary["population"]["observed"][0]
-            row["first_failure"]["gate"]["phase"] = phase
-            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=version)
-            with self.subTest(album_phase=phase, version=version):
-                self.assertIsNotNone(proof)
-                row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-                self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
-                if phase == "transition":
-                    for label, receipt, message in album_capture_gate_rejections(row["first_failure"]):
-                        changed = copy.deepcopy(proof)
-                        changed["failure"].pop("gate")
-                        if "gate" in receipt:
-                            changed["failure"]["gate"] = receipt["gate"]
-                        changed["failure"]["element"] = receipt["element"]
-                        with self.subTest(v3_album_rejection=label), self.assertRaisesRegex(ci_summary.ContractError,
-                                "^" + message + "$"):
-                            validate_environment_limit(changed)
-
-    def test_mode_departure_rejects_each_non_timing_or_unproven_failure(self):
-        from ci_failure_diagnostics import environment_limit_evidence, validate_environment_limit
-        summary, resource = hosted_mode_departure_summary("mode_selection")
-        row = summary["population"]["observed"][0]
-        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=3)
-        self.assertIsNotNone(proof)
-        for path, value in (
-                *((("failure", "surface"), surface) for surface in (
-                    "playback", "firstboot", "cache", "playback-settings", "system-settings", "unknown")),
-                (("failure", "step"), "mode-card"), (("failure", "step"), "query-element"),
-                (("failure", "element"), "mode.random.button"),
-                (("failure_phase",), "firstboot_setup"), (("failure_class",), "control_state"),
-                (("failure", "source"), "validator"), (("failure", "app"), "background"),
-                (("failure", "scene_status"), "BLACK"), (("failure", "scene_status"), "BLANK"),
-                (("failure", "wait_elapsed_seconds"), 4.99), (("failure", "wait_elapsed_seconds"), None),
-                (("failure", "deadline_seconds"), 0), (("failure", "deadline_seconds"), None)):
-            changed = copy.deepcopy(proof)
-            target = changed
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = value
-            with self.subTest(path=path, value=value), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^environment limit: failure is not an eligible timing wait$"):
-                validate_environment_limit(changed)
-        for path, value in (
-                (("failure_samples", 0, "elapsed_seconds"), 9),
-                (("failure_samples", 1, "elapsed_seconds"), 7),
-                (("failure_samples", 0, "elapsed_seconds"), 8),
-                (("failure_samples", 1, "elapsed_seconds"), 8),
-                (("failure_samples", 0, "idle_percent"), 5.01),
-                (("failure_samples",), [resource["failure_samples"][0]])):
-            changed = copy.deepcopy(proof)
-            target = changed["resources"]
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = value
-            with self.subTest(resource_path=path, value=value), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^environment limit: insufficient starvation evidence$"):
-                validate_environment_limit(changed)
-
-    def test_album_environment_policy_rechecks_gate_and_preserves_legacy_proofs(self):
-        from ci_failure_diagnostics import environment_limit_evidence, validate_environment_limit
-        summary, resource = hosted_album_timeout_summary()
-        row = summary["population"]["observed"][0]
-        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=2)
-        self.assertIsNotNone(proof)
-        self.assertEqual(row["first_failure"]["gate"], proof["failure"]["gate"])
-        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-        self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
-        for phase in ("transition", "incomingFromLoading"):
-            changed = copy.deepcopy(row)
-            changed["first_failure"]["gate"]["phase"] = phase
-            with self.subTest(phase=phase):
-                self.assertIsNotNone(environment_limit_evidence(summary, changed, [resource],
-                    runner_hosted=True, policy_version=2))
-        for label, receipt, message in album_capture_gate_rejections(row["first_failure"]):
-            changed = copy.deepcopy(row)
-            changed["first_failure"] = receipt
-            tampered = copy.deepcopy(proof)
-            tampered["failure"].pop("gate")
-            if "gate" in receipt:
-                tampered["failure"]["gate"] = receipt["gate"]
-            tampered["failure"]["element"] = receipt["element"]
-            with self.subTest(violation=label):
-                self.assertIsNone(environment_limit_evidence(summary, changed, [resource],
-                    runner_hosted=True, policy_version=2))
-                with self.assertRaisesRegex(ci_summary.ContractError, "^" + message + "$"):
-                    validate_environment_limit(tampered)
-        for elapsed in (7, 9):
-            changed = copy.deepcopy(proof)
-            changed["resources"]["failure_samples"][1 if elapsed == 7 else 0]["elapsed_seconds"] = elapsed
-            with self.subTest(one_sided=elapsed), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^environment limit: insufficient starvation evidence$"):
-                validate_environment_limit(changed)
-        for path, value in (
-                (("failure_phase",), "history_navigation"), (("failure_class",), "scene_identity"),
-                (("failure", "surface"), "mode"), (("failure", "app"), "not-running"),
-                *((("failure", "scene_status"), status) for status in ("BLACK", "BLANK", "UNRECOGNIZABLE")),
-                (("failure", "wait_elapsed_seconds"), 4.79), (("failure", "wait_elapsed_seconds"), None),
-                (("failure", "deadline_seconds"), 0), (("failure", "deadline_seconds"), None)):
-            changed = copy.deepcopy(proof)
-            target = changed
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = value
-            with self.subTest(common_rule=path, value=value), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^environment limit: failure is not an eligible timing wait$"):
-                validate_environment_limit(changed)
-        old, old_resource = hosted_timeout_summary()
-        old_row = old["population"]["observed"][0]
-        legacy = environment_limit_evidence(old, old_row, [old_resource], runner_hosted=True, policy_version=1)
-        old_row["environment_limit"] = old_row["attempts"][0]["environment_limit"] = legacy
-        self.assertEqual(legacy, ci_summary.parse_summary(old)["population"]["observed"][0]["environment_limit"])
-        with self.assertRaisesRegex(ci_summary.ContractError, "^environment failure: expected fields"):
-            validate_environment_limit(dict(proof, policy_version=1))
-
-    def test_album_gate_survives_public_summary_and_rejects_unbounded_facts(self):
-        from ci_failure_diagnostics import public_first_failure, scan_diagnostic_json
-        for summary in (archive_download_summary(), discovery_summary()):
-            summary.pop("archive_download", None)
-            if "compiled_evidence" in summary:
-                summary["compiled_evidence"]["first_exit_code"] = 65
-                summary["compiled_evidence"]["official_tests"]["testNodes"][0]["children"][0]["result"] = "Failed"
-                refresh_discovery_hash(summary)
-            identity = summary["population"]["declared"][0]
-            row = ci_summary.observation(identity, "failed", 1, exit_code=65)
-            row["first_failure"] = row["attempts"][0]["first_failure"] = first_failure_receipt(gate=True)
-            summary["population"]["observed"] = [row]
-            summary["status"] = "failed"
-            for element in ("slideshow.scenePresentation.contract.summary", "slideshow.control.next.button"):
-                row["first_failure"]["element"] = element
-                with self.subTest(version=summary["schema_version"], element=element):
-                    read = ci_summary.parse_summary(json.dumps(summary))
-                    receipt = read["population"]["observed"][0]["first_failure"]
-                    self.assertEqual(row["first_failure"]["gate"], public_first_failure(receipt)["gate"])
-                    line = next(line for line in ci_summary.render_markdown(read).splitlines() if "First failure:" in line)
-                    self.assertIn("gate=album-capture", line)
-                    self.assertIn("stable=false, paused=true, entry_hint_hidden=false, advanced=null, layers_changed=null, manifest_complete=true, phase=stablePhoto", line)
-                    scan_diagnostic_json(json.dumps({"nested": [read]}).encode())
-            # A timeout before any completed poll publishes only nulls and an unknown phase.
-            unobserved = copy.deepcopy(row["first_failure"])
-            unobserved["gate"] = {"kind": "album-capture", **dict.fromkeys(("stable", "paused", "entry_hint_hidden",
-                "advanced", "layers_changed", "manifest_complete")), "phase": "unknown"}
-            self.assertEqual(unobserved["gate"], public_first_failure(unobserved)["gate"])
-            missing = copy.deepcopy(row["first_failure"])
-            del missing["gate"]["manifest_complete"]
-            self.assertIsNone(public_first_failure(missing))
-            cases = [
-                (("gate",), None, "first failure gate: invalid fields"),
-                (("gate", "asset_id"), "private", "first failure gate: invalid fields"),
-                (("gate", "kind"), "private", "first failure: invalid gate kind"),
-                (("gate", "phase"), "private", "first failure: invalid gate phase"),
-                (("source",), "validator", "first failure: gate requires album capture timeout context"),
-                (("step",), "capture-frame", "first failure: gate requires album capture timeout context"),
-                (("element",), "app-window", "first failure: gate requires album capture timeout context"),
-            ]
-            for key in ("stable", "paused", "entry_hint_hidden", "advanced", "layers_changed", "manifest_complete"):
-                for invalid in (0, 1, "true", [], {}):
-                    cases.append((("gate", key), invalid, "first failure gate: invalid boolean"))
-            for path, value, message in cases:
-                changed = copy.deepcopy(row["first_failure"])
-                target = changed
-                for key in path[:-1]:
-                    target = target[key]
-                target[path[-1]] = value
-                with self.subTest(path=path, value=value):
-                    self.assertIsNone(public_first_failure(changed))
-                    with self.assertRaisesRegex(ci_summary.ContractError, "^" + message + "$"):
-                        scan_diagnostic_json(json.dumps({"nested": [{"first_failure": changed}]}).encode())
 
     def test_first_failure_lines_follow_all_summary_table_rows(self):
         summary = archive_download_summary()
@@ -1368,256 +130,13 @@ print('parsed 3 nightly retry records without image or runner dependencies')
         self.assertGreater(rendered.index("First failure:"), table_end)
         self.assertIn("First failure: " + first["key"], rendered)
 
-    def test_first_failure_survives_summary_aggregation_and_flaky_first_attempt(self):
-        from ci_failure_diagnostics import environment_limit_evidence
-        yellow, resources = hosted_timeout_summary()
-        row = yellow["population"]["observed"][0]
-        proof = environment_limit_evidence(yellow, row, [resources], runner_hosted=True)
-        self.assertIsNotNone(proof)
-        for changed_field, value in (("failure_class", "scene_identity"), ("failure_class", "control_state")):
-            changed = copy.deepcopy(row)
-            changed[changed_field] = value
-            busy = copy.deepcopy(resources)
-            for sample in busy["failure_samples"]:
-                sample["idle_percent"] = 0
-            self.assertIsNone(environment_limit_evidence(yellow, changed, [busy], runner_hosted=True))
-        for change in ("busy", "one", "missing", "outside", "duplicate", "before only", "after only"):
-            changed = copy.deepcopy(resources)
-            if change == "busy":
-                changed["failure_samples"][1]["idle_percent"] = 5.01
-            elif change == "one":
-                changed["failure_samples"].pop()
-            elif change == "missing":
-                changed["failure_samples"][1]["idle_percent"] = None
-            elif change == "outside":
-                changed["failure_samples"][0]["elapsed_seconds"] = 2.99
-            elif change == "duplicate":
-                changed["failure_samples"][1]["elapsed_seconds"] = 6
-            elif change == "before only":
-                changed["failure_samples"][1]["elapsed_seconds"] = 7
-            else:
-                changed["failure_samples"][0]["elapsed_seconds"] = 9
-            with self.subTest(change=change):
-                self.assertIsNone(environment_limit_evidence(yellow, row, [changed], runner_hosted=True))
-        self.assertIsNone(environment_limit_evidence(yellow, row, [resources], runner_hosted=False))
-        local = copy.deepcopy(yellow)
-        local["source"]["event"] = "local"
-        self.assertIsNone(environment_limit_evidence(local, row, [resources], runner_hosted=True))
-        truncated = copy.deepcopy(resources)
-        truncated["truncated"] = True
-        for sample in truncated["failure_samples"]:
-            sample["cpu_percent"] = dict.fromkeys(sample["cpu_percent"])
-        self.assertIsNotNone(environment_limit_evidence(yellow, row, [truncated], runner_hosted=True))
-        boundary = copy.deepcopy(resources)
-        boundary["duration_seconds"] = 13
-        boundary["failure_samples"][0]["elapsed_seconds"] = 3
-        boundary["failure_samples"][1]["elapsed_seconds"] = 13
-        self.assertIsNotNone(environment_limit_evidence(yellow, row, [boundary], runner_hosted=True))
-        mode_wait = copy.deepcopy(row)
-        mode_wait.update(failure_phase="mode_selection", failure_class="navigation")
-        mode_wait["first_failure"].update(step="mode-card", element="mode.random.button", action="tap")
-        mode_wait["first_failure"]["state"].update(surface="mode", scene_status="UNRECOGNIZABLE")
-        # Main run 39591470339: a real mode-card deadline failure, with no resource samples.
-        mode_wait["first_failure"]["timing"].update(wait_elapsed_seconds=7.788485416666845, deadline_seconds=7)
-        no_samples = dict(resources, sample_count=0, first_failure_elapsed_seconds=None,
-            failure_samples=[], idle_percent_min=None, idle_percent_median=None, truncated=True)
-        self.assertIsNone(environment_limit_evidence(yellow, mode_wait, [no_samples], runner_hosted=True))
-        self.assertIsNotNone(environment_limit_evidence(yellow, mode_wait, [resources], runner_hosted=True))
-        pending_review = ci_summary.observation(row["identity"], "needs-human-review", 12)
-        self.assertIsNone(environment_limit_evidence(yellow, pending_review, [resources], runner_hosted=True))
-        for phase, step in (("playback_entry", "mode-departure"), ("firstboot_setup", "query-element"),
-                            ("mode_selection", "query-element")):
-            wrong_target = copy.deepcopy(row)
-            wrong_target.update(failure_phase=phase, failure_class="navigation")
-            wrong_target["first_failure"]["step"] = step
-            with self.subTest(unlisted_navigation_target=(phase, step)):
-                self.assertIsNone(environment_limit_evidence(yellow, wrong_target, [resources], runner_hosted=True))
-        for elapsed, expected in ((5, True), (4.99, False)):
-            changed = copy.deepcopy(row)
-            changed["first_failure"]["timing"]["wait_elapsed_seconds"] = elapsed
-            self.assertEqual(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True) is not None, expected)
-        # Native idle alone has no following successful readback and must remain red.
-        for step, action, duration in (("select", "tap", 25), ("query-element", "tap", 25),
-                                       ("select", "select", 25), ("select", "tap", 19)):
-            changed = copy.deepcopy(row)
-            receipt = changed["first_failure"]
-            receipt.update(step=step, action=action)
-            receipt["timing"].update(wait_elapsed_seconds=None, deadline_seconds=None, action_duration_seconds=duration)
-            receipt["native_activity_seconds"] = dict.fromkeys(("pre_event_idle", "find_window", "synthesize_event",
-                "post_event_idle", "ax_root_acquisition"))
-            receipt["native_activity_seconds"]["post_event_idle"] = 20
-            self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
-        for state_field, value in (("surface", "unknown"), ("surface", "mode"), ("scene_status", "BLANK"),
-                                   ("scene_status", "UNRECOGNIZABLE")):
-            changed = copy.deepcopy(row)
-            changed["first_failure"]["state"][state_field] = value
-            with self.subTest(state_field=state_field, value=value):
-                self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
-        for step, element, version in (("mode-continue", "mode.continue.button", 2),
-                ("mode-card", "mode.filtered.button", 2), ("mode-card", "mode.filtered.button", 3)):
-            changed = copy.deepcopy(mode_wait)
-            changed["first_failure"].update(step=step, element=element)
-            self.assertIsNotNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True, policy_version=version))
-            changed["first_failure"]["state"]["surface"] = "playback"
-            self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True, policy_version=version))
-        changed = copy.deepcopy(row)
-        changed["first_failure"]["source"] = "validator"
-        changed["first_failure"]["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
-        self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
-        changed = copy.deepcopy(row)
-        changed.update(failure_phase="unknown", failure_class="snapshot_query")
-        self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
-        changed.update(failure_phase="hidden_controls", failure_class="hidden_controls")
-        self.assertIsNotNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
-        changed["first_failure"]["state"]["control_bar"] = "visible"
-        self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
-        changed = copy.deepcopy(row)
-        changed["first_failure"]["element"] = "unknown"
-        self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
-        for source_change in ("black", "process", "validator", "phase", "missing receipt", "multiple cases"):
-            changed = copy.deepcopy(row)
-            cases = [resources]
-            if source_change == "black":
-                changed["first_failure"]["state"]["scene_status"] = "BLACK"
-            elif source_change == "process":
-                changed["first_failure"]["state"]["app"] = "not-running"
-                changed["first_failure"]["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
-            elif source_change == "validator":
-                changed["validator_failure_message"] = "All black must not count as a pass"
-            elif source_change == "phase":
-                changed["failure_phase"] = "history_navigation"
-            elif source_change == "missing receipt":
-                changed.pop("first_failure")
-            else:
-                cases = [resources, dict(resources, sequence=5)]
-            with self.subTest(source_change=source_change):
-                self.assertIsNone(environment_limit_evidence(yellow, changed, cases, runner_hosted=True))
-        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-        self.assertEqual("failed", ci_summary.parse_summary(json.dumps(yellow))["population"]["observed"][0]["outcome"])
-        self.assertIn("ENVIRONMENT-LIMITED", ci_summary.render_markdown(yellow))
-        self.assertIn("| failed (environment-limited; yellow) |", ci_summary.render_markdown(yellow))
-        from ci_failure_diagnostics import scan_diagnostic_json
-        scan_diagnostic_json(json.dumps(yellow).encode())
-        for mutation in ("missing", "identity", "sequence", "hosted", "resources", "missing host", "conflicting host"):
-            changed = copy.deepcopy(yellow)
-            changed["strict_case_evidence"] = copy.deepcopy(changed["strict_case_evidence"])
-            evidence = changed["strict_case_evidence"][0]
-            if mutation == "missing":
-                changed.pop("strict_case_evidence")
-            elif mutation == "identity":
-                evidence["identity"] = dict(evidence["identity"], key="other-case")
-            elif mutation == "sequence":
-                evidence["bounded_diagnostics"]["events"][0]["sequence"] = 5
-            elif mutation == "hosted":
-                evidence["bounded_diagnostics"]["events"][0]["sample"]["runner_hosted"] = False
-            elif mutation == "missing host":
-                evidence["bounded_diagnostics"]["events"][0]["sample"] = None
-            elif mutation == "conflicting host":
-                event = copy.deepcopy(evidence["bounded_diagnostics"]["events"][0])
-                event["sample"]["runner_hosted"] = False
-                evidence["bounded_diagnostics"]["events"].append(event)
-            else:
-                evidence["bounded_diagnostics"]["case_resources"][0]["failure_samples"][0]["idle_percent"] = 1
-            with self.subTest(binding=mutation), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^environment limit differs from summary case evidence$"):
-                ci_summary.parse_summary(json.dumps(changed))
-        for mutation, message in (("not a list", "invalid strict case evidence"),
-                ("duplicate", "invalid or duplicate strict case evidence"),
-                ("non-strict", "invalid or duplicate strict case evidence"),
-                ("extra field", "strict case evidence: expected fields")):
-            changed = copy.deepcopy(yellow)
-            if mutation == "not a list":
-                changed["strict_case_evidence"] = None
-            elif mutation == "duplicate":
-                changed["strict_case_evidence"].append(copy.deepcopy(changed["strict_case_evidence"][0]))
-            elif mutation == "non-strict":
-                changed["strict_case_evidence"][0]["identity"] = ci_summary.test_identity("host", "other")
-            else:
-                changed["strict_case_evidence"][0]["extra"] = True
-            with self.subTest(case_evidence=mutation), self.assertRaisesRegex(ci_summary.ContractError, "^" + message):
-                ci_summary.parse_summary(json.dumps(changed))
-        private = copy.deepcopy(yellow)
-        private["population"]["observed"][0]["environment_limit"]["private"] = "forbidden"
-        with self.assertRaisesRegex(ci_summary.ContractError, "^environment limit: expected fields"):
-            scan_diagnostic_json(json.dumps(private).encode())
-        for path, value, prefix in ((('schema_version',), True, "environment limit: hosted evidence required"),
-                (('policy_version',), 999, "environment limit: unsupported policy version"),
-                (('policy_version',), 6, "environment limit: unsupported policy version"),
-                (('policy_version',), True, "environment limit: unsupported policy version"),
-                (('policy_version',), 3.0, "environment limit: unsupported policy version"),
-                (('runner_hosted',), False, "environment limit: hosted evidence required"),
-                (('failure', 'step'), 'unknown', "environment limit: failure is not an eligible timing wait"),
-                (('resources', 'failure_samples'), [], "environment limit: insufficient starvation evidence")):
-            changed = copy.deepcopy(yellow)
-            target = changed["population"]["observed"][0]["environment_limit"]
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = value
-            with self.subTest(path=path, value=value), self.assertRaisesRegex(ci_summary.ContractError, "^" + prefix):
-                ci_summary.parse_summary(json.dumps(changed))
-        for mutation in ("local", "ui", "mismatched", "passed", "orphan attempt"):
-            changed = copy.deepcopy(yellow)
-            if mutation == "local":
-                changed["source"]["event"] = "local"
-            elif mutation == "ui":
-                changed["run"]["tier"] = "ui"
-            elif mutation == "mismatched":
-                changed["population"]["observed"][0]["attempts"][0].pop("environment_limit")
-            elif mutation == "orphan attempt":
-                changed["population"]["observed"][0].pop("environment_limit")
-            else:
-                changed["population"]["observed"][0]["outcome"] = "passed"
-            message = {"local": "source/identity mismatch", "ui": "environment limit differs from scoped first failure evidence",
-                "mismatched": "environment limit requires one matching failed strict attempt",
-                "passed": "environment limit requires one matching failed strict attempt",
-                "orphan attempt": "environment limit attempt requires observation evidence"}[mutation]
-            with self.subTest(mutation=mutation), self.assertRaisesRegex(ci_summary.ContractError, "^" + message + "$"):
-                ci_summary.parse_summary(json.dumps(changed))
-        summary = archive_download_summary()
-        summary.pop("archive_download")
-        identity = summary["population"]["declared"][0]
-        failed = ci_summary.observation(identity, "failed", 1, exit_code=65)
-        failed["first_failure"] = failed["attempts"][0]["first_failure"] = first_failure_receipt(native=True)
-        summary["population"]["observed"] = [failed]
-        summary["status"] = "failed"
-        with tempfile.TemporaryDirectory() as directory:
-            ci_summary.write_summary(summary, Path(directory))
-            read = ci_summary.parse_summary((Path(directory) / "summary.json").read_text())
-        self.assertEqual(read["population"]["observed"], [failed])
-        self.assertIn("query-element", ci_summary.render_markdown(read))
-        self.assertIn("post=23.05s", ci_summary.render_markdown(read))
-        self.assertIn("ax=unavailable", ci_summary.render_markdown(read))
-        from ci_flaky import merge_retry
-        second = ci_summary.observation(identity, "failed", 2, exit_code=65)
-        later_receipt = first_failure_receipt()
-        later_receipt["step"] = "capture-frame"
-        second["first_failure"] = second["attempts"][0]["first_failure"] = later_receipt
-        merged = merge_retry(failed, second)
-        self.assertEqual("failed", merged["outcome"])
-        self.assertEqual(failed["first_failure"], merged["first_failure"])
-        self.assertEqual(later_receipt, merged["attempts"][1]["first_failure"])
-        changed = copy.deepcopy(merged)
-        changed["first_failure"] = later_receipt
-        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure must match the first failing attempt$"):
-            ci_summary.validate_observation(changed)
-        # Existing retry semantics retain the first receipt, without attaching it to the passing attempt.
-        failed.update(outcome="flaky-passed", duration_seconds=2)
-        failed["attempts"].append({**ci_summary.observation(identity, "passed", 1)["attempts"][0], "number": 2})
-        summary["status"] = "passed"
-        self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
-        failed["first_failure"]["timing"]["deadline_seconds"] = 6
-        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure must match the first failing attempt$"):
-            # Break aliasing to change only the observation receipt.
-            changed = copy.deepcopy(summary)
-            changed["population"]["observed"][0]["attempts"][0]["first_failure"] = first_failure_receipt()
-            ci_summary.parse_summary(json.dumps(changed))
 
     def test_first_failure_rejects_one_private_unbounded_or_misbound_field(self):
         summary = archive_download_summary()
         summary.pop("archive_download")
         identity = summary["population"]["declared"][0]
         item = ci_summary.observation(identity, "failed", 1, exit_code=65)
-        item["first_failure"] = item["attempts"][0]["first_failure"] = first_failure_receipt(native=True)
+        item["first_failure"] = item["attempts"][0]["first_failure"] = first_failure_receipt()
         summary["population"]["observed"] = [item]
         summary["status"] = "failed"
         cases = [
@@ -1627,8 +146,6 @@ print('parsed 3 nightly retry records without image or runner dependencies')
             (("step",), "raw assertion", "first failure: invalid step"),
             (("element",), "album.private-id", "first failure: invalid element"),
             (("action",), "https://private.invalid", "first failure: invalid action"),
-            (("native_activity_seconds",), {}, "first failure native activity: invalid fields"),
-            (("native_activity_seconds", "title"), "private", "first failure native activity: invalid fields"),
             (("timing", "deadline_seconds"), True, "first failure timing: invalid number"),
             (("timing", "wait_elapsed_seconds"), float("inf"), "first failure timing: invalid number"),
             (("timing", "deadline_seconds"), 86401, "first failure timing: invalid number"),
@@ -1654,21 +171,13 @@ print('parsed 3 nightly retry records without image or runner dependencies')
             (("screenshot", "status"), "validated-input", "first failure: validated input requires validator source"),
             (("screenshot", "bytes"), 1048577, "first failure screenshot: invalid number"),
             (("screenshot", "path"), "/tmp/private.png", "first failure screenshot: invalid fields"),
-            (("validator",), {"kind": "raw error", "slot": None, "axis": "unknown"}, "first failure: invalid validator kind"),
-            (("validator",), {"kind": "glyph", "slot": None, "axis": "private"}, "first failure: invalid validator axis"),
-            (("validator",), {"kind": "glyph", "slot": 0, "axis": "unknown"}, "first failure validator: invalid number"),
-            (("validator",), {}, "first failure validator: invalid fields"),
-            (("validator",), {"kind": "glyph", "slot": None, "axis": "unknown"},
-                "first failure: validator context requires validator source"),
+            (("validator",), {"kind": "glyph", "slot": None, "axis": "unknown"}, "first failure: smoke has no visual validator"),
             (("state", "surface"), "firstboot", "first failure: screenshot is not an allowed app window"),
             (("state", "app"), "background", "first failure: screenshot is not an allowed app window"),
-            (("source",), "validator", "first failure: screenshot is not an allowed app window"),
+            (("source",), "validator", "first failure: invalid source"),
             (("element",), "firstboot.serverURL.field", "first failure: screenshot is not an allowed app window"),
             (("state", "focus"), "firstboot.apiKey.field", "first failure: screenshot is not an allowed app window"),
         ]
-        for key in ("pre_event_idle", "find_window", "synthesize_event", "post_event_idle", "ax_root_acquisition"):
-            for invalid in (-1, True, float("nan"), float("inf"), 86401, "private-title"):
-                cases.append((("native_activity_seconds", key), invalid, "first failure native activity: invalid number"))
         self.assertEqual(ci_summary.parse_summary(summary), summary)
         for path, value, message in cases:
             changed = copy.deepcopy(summary)
@@ -1683,166 +192,13 @@ print('parsed 3 nightly retry records without image or runner dependencies')
                 with self.assertRaisesRegex(ci_summary.ContractError, "^" + message + "$") as error:
                     ci_summary.parse_summary(changed)
                 self.assertNotIn("private", str(error.exception))
-        for level in ("observation", "attempt"):
-            changed = copy.deepcopy(summary)
-            target = changed["population"]["observed"][0]
-            if level == "attempt":
-                target = target["attempts"][0]
-            target["outcome"] = "passed"
-            with self.subTest(level=level), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^first failure requires a failing strict or UI " + level + "$"):
-                ci_summary.parse_summary(changed)
         for kind in ("host", "swift"):
             changed = copy.deepcopy(summary)
             changed["population"]["observed"][0]["identity"]["kind"] = kind
             with self.subTest(kind=kind), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^first failure requires a failing strict or UI observation$"):
+                    "^first failure requires a failing UI observation$"):
                 ci_summary.parse_summary(changed)
 
-    def test_first_failure_supports_unavailable_preparation_validator_and_scoped_ui_records(self):
-        receipt = first_failure_receipt()
-        receipt.update(source="preparation", step="simulator-boot", element="simulator", action="none")
-        receipt["timing"] = dict.fromkeys(receipt["timing"])
-        receipt["timing"].update(wait_elapsed_seconds=60.2, deadline_seconds=60)
-        receipt["state"].update(app="unknown", observation="unavailable", history_count=None,
-            surface="unknown", control_bar="unknown", focus="unknown", autoplay="unknown", orientation="unknown", scene_status="unknown")
-        receipt["screenshot"] = {"status": "not-applicable", "width": None, "height": None, "bytes": None}
-        summary = archive_download_summary()
-        summary.pop("archive_download")
-        identity = summary["population"]["declared"][0]
-        failed = ci_summary.observation(identity, "not-run", 0, exit_code=124)
-        failed["first_failure"] = failed["attempts"][0]["first_failure"] = receipt
-        summary["population"].update(observed=[failed], compiled=[])
-        summary["status"] = "failed"
-        self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
-        receipt["native_activity_seconds"] = first_failure_receipt(native=True)["native_activity_seconds"]
-        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure: native activity requires xctest source$"):
-            ci_summary.parse_summary(summary)
-        del receipt["native_activity_seconds"]
-        changed = copy.deepcopy(summary)
-        changed["population"]["observed"][0]["attempts"][0]["outcome"] = "failed"
-        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure source must match execution state$"):
-            ci_summary.parse_summary(changed)
-        for section, key, value in (("state", "app", "running-foreground"),
-                ("state", "observation", "cached"), ("state", "history_count", 1),
-                ("state", "surface", "playback"), ("state", "control_bar", "hidden"),
-                ("state", "focus", "slideshow.hiddenWakeReceiver"), ("state", "autoplay", "off"),
-                ("state", "orientation", "landscape"), ("state", "scene_status", "MATCH"),
-                ("screenshot", "status", "unavailable")):
-            changed = copy.deepcopy(summary)
-            row = changed["population"]["observed"][0]
-            for current in (row["first_failure"], row["attempts"][0]["first_failure"]):
-                current[section][key] = value
-            with self.subTest(section=section, key=key), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^first failure: preparation cannot claim app evidence$"):
-                ci_summary.parse_summary(changed)
-        scoped = discovery_summary()
-        receipt = first_failure_receipt()
-        item = scoped["population"]["observed"][0]
-        item["outcome"] = item["attempts"][0]["outcome"] = scoped["status"] = "failed"
-        item["attempts"][0]["exit_code"] = scoped["compiled_evidence"]["first_exit_code"] = 65
-        item["first_failure"] = item["attempts"][0]["first_failure"] = receipt
-        scoped["compiled_evidence"]["official_tests"]["testNodes"][0]["children"][0]["result"] = "Failed"
-        refresh_discovery_hash(scoped)
-        self.assertEqual(ci_summary.parse_summary(json.dumps(scoped)), scoped)
-        receipt.update(source="validator", validator={"kind": "glyph", "slot": 2, "axis": "vertical"})
-        receipt["screenshot"]["status"] = "validated-input"
-        self.assertEqual(ci_summary.parse_summary(json.dumps(scoped)), scoped)
-        receipt["native_activity_seconds"] = first_failure_receipt(native=True)["native_activity_seconds"]
-        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure: native activity requires xctest source$"):
-            ci_summary.parse_summary(scoped)
-        del receipt["native_activity_seconds"]
-        receipt["state"]["observation"] = "failure-snapshot"
-        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure: validator cannot claim a failure snapshot$"):
-            ci_summary.parse_summary(scoped)
-
-    def test_first_failure_scanner_and_ui_upload_reject_invalid_receipts_and_media(self):
-        import io
-        from PIL import Image
-        from ci_ui_tests import main as ui_main
-        from run_strict_e2e import CommandError, write_sensitive_scan
-        receipt = first_failure_receipt(native=True)
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            picture = io.BytesIO()
-            Image.new("RGB", (320, 180), "blue").save(picture, format="PNG")
-            receipt["screenshot"].update(width=320, height=180, bytes=len(picture.getvalue()))
-            image_path = root / "failure-screenshots/first-failure-attempt-1/0.png"
-            image_path.parent.mkdir(parents=True)
-            image_path.write_bytes(picture.getvalue())
-            path = root / "diagnostic.json"
-            path.write_text(json.dumps({"nested": [{"first_failure": receipt}]}))
-            summary = archive_download_summary()
-            summary.pop("archive_download")
-            identity = summary["population"]["declared"][0]
-            failed = ci_summary.observation(identity, "failed", 1, exit_code=65)
-            failed["first_failure"] = failed["attempts"][0]["first_failure"] = receipt
-            summary["population"]["observed"] = [failed]
-            summary["status"] = "failed"
-            ci_summary.write_summary(summary, root)
-            with patch("ci_ui_tests.output"):
-                self.assertEqual(0, ui_main(["check-upload", "--output-dir", str(root)]))
-            self.assertEqual("PASS", json.loads((root / "sensitive-scan.json").read_text())["result"])
-            from contextlib import redirect_stderr
-            extra = root / "failure-screenshots/legacy.png"
-            for defect in ("dimensions", "metadata", "size"):
-                supplied = io.BytesIO()
-                if defect == "size":
-                    import random
-                    image = Image.frombytes("RGB", (1536, 1024), random.Random(0).randbytes(1536 * 1024 * 3))
-                else:
-                    image = Image.new("RGB", (2000, 100) if defect == "dimensions" else (320, 180), "blue")
-                image.save(supplied, format="PNG", **({"icc_profile": b"PRIVATE_PROFILE"} if defect == "metadata" else {}))
-                extra.write_bytes(supplied.getvalue())
-                with self.subTest(defect=defect), patch("ci_ui_tests.output"), redirect_stderr(io.StringIO()) as errors:
-                    self.assertEqual(1, ui_main(["check-upload", "--output-dir", str(root)]))
-                self.assertIn("first failure package image " + {"dimensions": "dimensions differ",
-                    "metadata": "contains unsupported data", "size": "exceeds bound"}[defect], errors.getvalue())
-                self.assertNotIn("PRIVATE_PROFILE", errors.getvalue())
-            extra.unlink()
-            for defect, message in (("missing-image", "nonregular first failure package input"),
-                    ("symlink-image", "nonregular first failure package input"),
-                    ("symlink-directory", "invalid first failure package directory"),
-                    ("foreign-directory", "invalid first failure package directory"),
-                    ("extra-file", "unexpected first failure package content")):
-                held = root / "held"
-                foreign = root / "failure-screenshots/first-failure-attempt-2"
-                if defect in {"missing-image", "symlink-image"}:
-                    image_path.rename(held)
-                    if defect == "symlink-image":
-                        image_path.symlink_to(held)
-                elif defect == "symlink-directory":
-                    image_path.parent.rename(held)
-                    image_path.parent.symlink_to(held, target_is_directory=True)
-                elif defect == "foreign-directory":
-                    foreign.mkdir()
-                else:
-                    (image_path.parent / "unexpected.txt").write_text("public")
-                try:
-                    with self.subTest(defect=defect), patch("ci_ui_tests.output"), redirect_stderr(io.StringIO()) as errors:
-                        self.assertEqual(1, ui_main(["check-upload", "--output-dir", str(root)]))
-                    self.assertIn(message, errors.getvalue())
-                finally:
-                    if defect in {"missing-image", "symlink-image"}:
-                        image_path.unlink(missing_ok=True)
-                        held.rename(image_path)
-                    elif defect == "symlink-directory":
-                        image_path.parent.unlink()
-                        held.rename(image_path.parent)
-                    elif defect == "foreign-directory":
-                        foreign.rmdir()
-                    else:
-                        (image_path.parent / "unexpected.txt").unlink()
-            for raw in ('{"first_failure":' + json.dumps(receipt).replace('"source": "xctest"',
-                        '"source": "private", "source": "xctest"') + '}',
-                        '{"first_failure":', '{"first_\\u0066ailure":',
-                        '{"first_failure":' + json.dumps(receipt).replace('"post_event_idle": 23.05',
-                            '"post_event_idle": 1, "post_event_idle": 23.05') + '}',
-                        json.dumps({"first_failure": {**receipt, "element": "private-id"}})):
-                path.write_text(raw)
-                with self.subTest(raw=raw[:40]), self.assertRaisesRegex(CommandError,
-                        "^The evidence redaction scan found API Key values or invalid public failure diagnostics:"):
-                    write_sensitive_scan(root, ["synthetic-secret"])
 
     def test_bounded_diagnostic_scanner_refuses_nested_private_duplicate_and_broken_receipts(self):
         from ci_failure_diagnostics import scan_diagnostic_json
@@ -1966,222 +322,6 @@ print('parsed 3 nightly retry records without image or runner dependencies')
         self.assertEqual(summary, ci_summary.parse_summary(summary))
         self.assertIn("Runner cleanup survivors: unavailable", ci_summary.render_markdown(summary))
 
-    def test_simulator_process_projection_preserves_old_nights_and_yellow_history(self):
-        from ci_failure_diagnostics import scan_diagnostic_json, environment_limit_evidence
-        summary, resource = hosted_timeout_summary()
-        old = copy.deepcopy(summary)
-        resource["simulator_processes"] = {"unavailable": False, "truncated": True,
-            "entries": [{"name": "STExtractionService", "mean": 85, "peak": 140, "samples": 2},
-                        {"name": "other", "mean": 4, "peak": 8, "samples": 2}]}
-        row = summary["population"]["observed"][0]
-        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True)
-        self.assertIsNotNone(proof)
-        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
-        for night in (old, summary):
-            self.assertEqual(night, ci_summary.parse_summary(json.dumps(night)))
-            scan_diagnostic_json(json.dumps(night).encode())
-        self.assertNotIn("sim-top:", ci_summary.render_markdown(old))
-        self.assertIn("sim-top: STExtractionService 85%/140%, other 4%/8% (truncated)",
-                      ci_summary.render_markdown(summary))
-        # Re-read the unchanged projection through the archived yellow proof too.
-        self.assertIn("simulator_processes", summary["population"]["observed"][0]["environment_limit"]["resources"])
-        for path, defect in ((('entries', 0, 'name'), '/private/secret'),
-                (('entries', 0, 'name'), 'UnknownWidget'), (('entries', 0, 'mean'), float('nan')),
-                (('entries', 0, 'peak'), float('inf')), (('entries', 0, 'samples'), True),
-                (('entries', 0, 'mean'), -1), (('entries', 0, 'peak'), 84),
-                (('entries', 0, 'samples'), 0), (('entries', 0, 'pid'), 123),
-                (('entries', 0, 'samples'), 43202), (('entries', 0, 'mean'), True),
-                (('entries', 0, 'mean'), 1000001), (('entries', 0, 'samples'), 3),
-                (('entries',), [dict(resource['simulator_processes']['entries'][0], name=name) for name in
-                    ('diagnosticd', 'lsd', 'STExtractionService', 'PosterBoard', 'intelligenceplatformd', 'photoanalysisd', 'other')]),
-                (('entries',), [resource['simulator_processes']['entries'][0]] * 2
-                    + [resource['simulator_processes']['entries'][1]]),
-                (('udid',), 'private-device'), (('entries',), []),
-                (('entries', 1, 'name'), 'lsd'), (('entries', 0, 'mean'), None),
-                (('unavailable',), True),
-                (('unavailable',), 'false'), (('truncated',), 1)):
-            changed = copy.deepcopy(summary)
-            target = changed['strict_case_evidence'][0]['bounded_diagnostics']['case_resources'][0]['simulator_processes']
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = defect
-            with self.subTest(path=path, defect=defect), self.assertRaisesRegex(
-                    ci_summary.ContractError, '^simulator processes: invalid projection$'):
-                ci_summary.parse_summary(changed)
-
-    def test_optional_app_hang_stack_round_trips_and_old_nights_keep_their_verdict(self):
-        from ci_failure_diagnostics import scan_diagnostic_json
-        summary, _ = hosted_timeout_summary()
-        summary["bounded_diagnostics"] = summary["strict_case_evidence"][0]["bounded_diagnostics"]
-        old = copy.deepcopy(summary)
-        case = summary["bounded_diagnostics"]["case_resources"][0]
-        case["app_hang_stack"] = {"status": "captured", "sample_count": 12,
-            "frames": [{"symbol": "SettingsViewIOS.body", "module": "immichSlides", "samples": 4}]}
-        for night in (old, summary):
-            self.assertEqual(night, ci_summary.parse_summary(json.dumps(night)))
-            scan_diagnostic_json(json.dumps(night).encode())
-            self.assertEqual(old["status"], night["status"])
-        self.assertNotIn("app-hang-stack", ci_summary.render_markdown(old))
-        self.assertIn("app-hang-stack: `SettingsViewIOS.body` (4/12 samples)", ci_summary.render_markdown(summary))
-        stack = case["app_hang_stack"]
-        for path, defect in ((("status",), "unknown"), (("sample_count",), True), (("frames",), [{}]),
-                             (("frames", 0, "symbol"), str(Path("/", "Users", "private-user", "secret"))),
-                             (("frames", 0, "symbol"), "private-host.local"),
-                             (("frames", 0, "module"), "private-user"),
-                             (("frames", 0, "samples"), 0),
-                             (("hint",), [True]), (("hint",), [1]), (("hint",), [0, 0]),
-                             (("frames",), [stack["frames"][0]] * 31),
-                             (("frames",), [{**stack["frames"][0], "symbol": "V" * 160}] * 25)):
-            changed = copy.deepcopy(summary)
-            target = changed["bounded_diagnostics"]["case_resources"][0]["app_hang_stack"]
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = defect
-            with self.subTest(path=path), self.assertRaisesRegex(ci_summary.ContractError, "^app hang stack: invalid projection$"):
-                ci_summary.parse_summary(changed)
-
-    def test_pause_window_assertions_are_closed_optional_and_do_not_change_eligibility(self):
-        from ci_failure_diagnostics import environment_limit_evidence, scan_diagnostic_json
-        summary, resource = hosted_timeout_summary()
-        old = copy.deepcopy(summary)
-        row = summary["population"]["observed"][0]
-        before = environment_limit_evidence(summary, row, [resource], runner_hosted=True)
-        self.assertIsNotNone(before)
-        resource["pause_window_assertions"] = ["bright-a2", "restored-a2", "unmapped"]
-        self.assertEqual(summary, ci_summary.parse_summary(json.dumps(summary)))
-        scan_diagnostic_json(json.dumps(summary).encode())
-        self.assertEqual("failed", summary["status"])
-        after = environment_limit_evidence(summary, row, [resource], runner_hosted=True)
-        self.assertIsNotNone(after)
-        self.assertEqual(before["failure"], after["failure"])
-        row["environment_limit"] = row["attempts"][0]["environment_limit"] = after
-        parsed = ci_summary.parse_summary(json.dumps(summary))
-        self.assertEqual(resource["pause_window_assertions"],
-            parsed["population"]["observed"][0]["environment_limit"]["resources"]["pause_window_assertions"])
-        self.assertNotIn("pause-window assertions:", ci_summary.render_markdown(old))
-        self.assertIn("pause-window assertions: bright-a2, restored-a2, unmapped", ci_summary.render_markdown(summary))
-        for defect in (None, [], "bright-a2", {}, [True], [[]], ["PRIVATE_SENTINEL"], ["bright-a2", "bright-a2"]):
-            changed = copy.deepcopy(summary)
-            changed["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]["pause_window_assertions"] = defect
-            with self.subTest(defect=defect):
-                with self.assertRaisesRegex(ci_summary.ContractError,
-                        "^pause window assertions: invalid families$") as error:
-                    ci_summary.parse_summary(changed)
-                self.assertNotIn("PRIVATE_SENTINEL", str(error.exception))
-
-    def test_failure_locations_round_trip_old_nights_and_drop_only_invalid_projection(self):
-        from ci_failure_diagnostics import environment_limit_evidence, scan_diagnostic_json
-        summary, resource = hosted_timeout_summary()
-        old = copy.deepcopy(summary)
-        row = summary["population"]["observed"][0]
-        before = environment_limit_evidence(summary, row, [resource], runner_hosted=True)
-        locations = [{"path": "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "line": 812},
-                     {"path": "TestSupport/Nested/Timing.swift", "line": 1},
-                     {"path": "immichSlidesTests/" + "a" * (240 - len("immichSlidesTests/") - len(".swift")) + ".swift",
-                      "line": 1000000}]
-        resource["failure_locations"] = locations
-        after = environment_limit_evidence(summary, row, [resource], runner_hosted=True)
-        self.assertIsNotNone(before)
-        self.assertIsNotNone(after)
-        self.assertEqual(before["failure"], after["failure"])
-        row["environment_limit"] = row["attempts"][0]["environment_limit"] = after
-        self.assertEqual(summary, ci_summary.parse_summary(json.dumps(summary)))
-        scan_diagnostic_json(json.dumps(summary).encode())
-        self.assertEqual(old, ci_summary.parse_summary(json.dumps(old)))
-        self.assertNotIn("failed at", ci_summary.render_markdown(old))
-        self.assertIn("failed at immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift:812",
-                      ci_summary.render_markdown(summary))
-        defects = [None, [], {}, locations * 2, [dict(locations[0], message="PRIVATE_SENTINEL")]]
-        defects += [[{"path": path, "line": 812}] for path in (
-            "/tmp/immichSlidesUITests/Timing.swift", "/" + "Users/PRIVATE_SENTINEL/TestSupport/Timing.swift",
-            "file://PRIVATE_SENTINEL/TestSupport/Timing.swift", "TestSupport/../Timing.swift",
-            "immichSlides/Timing.swift", "TestSupport/" + "a" * 240 + ".swift", "TestSupport/Timing.txt")]
-        defects += [[dict(locations[0], line=line)] for line in (0, -1, True, 1.5, "812", 1000001)]
-        for defect in defects:
-            changed = copy.deepcopy(summary)
-            target = changed["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]
-            target["failure_locations"] = defect
-            # Retained yellow proofs use the same optional reader as the case resource.
-            for entry in [changed["population"]["observed"][0], changed["population"]["observed"][0]["attempts"][0]]:
-                entry["environment_limit"]["resources"]["failure_locations"] = defect
-            expected = copy.deepcopy(changed)
-            expected["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0].pop("failure_locations")
-            for entry in [expected["population"]["observed"][0], expected["population"]["observed"][0]["attempts"][0]]:
-                entry["environment_limit"]["resources"].pop("failure_locations", None)
-            with self.subTest(defect=defect):
-                try:
-                    parsed = ci_summary.parse_summary(json.dumps(changed))
-                except ci_summary.ContractError as error:
-                    self.fail(f"Invalid optional location discarded enclosing evidence: {error}")
-                self.assertEqual(expected, parsed)
-                for evidence in (changed, {"environment_limit": changed["population"]["observed"][0]["environment_limit"]}):
-                    with self.assertRaisesRegex(ValueError, "^failure locations: invalid projection$"):
-                        scan_diagnostic_json(json.dumps(evidence).encode())
-
-    def test_optional_continue_watch_round_trips_and_old_nights_keep_their_verdict(self):
-        from ci_failure_diagnostics import scan_diagnostic_json
-        summary, resource = hosted_timeout_summary()
-        old = copy.deepcopy(summary)
-        resource["continue_watch"] = {"total_frames": 5, "truncated": False,
-            "frames": [[0, .01, .02, "MATCH", "A1", .7, 255, .1, False],
-                       [.1, .13, .14, "MATCH", "A1", .6, 252, .05, False],
-                       [.3, .34, .35, "TRANSITION", "A1", .5, 240, .01, False],
-                       [1.2, 1.26, 1.29, "MATCH", "A2", .4, 200, .01, False],
-                       [1.3, 1.31, 1.32, "MATCH", "A1", .3, 253, .01, False]],
-            "indices": {}, "wake": None}
-        for night in (old, summary):
-            self.assertEqual(night, ci_summary.parse_summary(json.dumps(night)))
-            scan_diagnostic_json(json.dumps(night).encode())
-            self.assertEqual("failed", night["status"])
-        self.assertNotIn("continue-watch:", ci_summary.render_markdown(old))
-        self.assertIn("continue-watch: frames=5/5, median request interval=0.15s, dim MATCH=1, "
-                      "judge=not_recorded, rescue=unknown/not_recorded",
-                      ci_summary.render_markdown(summary))
-        projection = resource["continue_watch"]
-        projection.update(judge="early", rescue_ran=False, rescue_stage="not_run")
-        self.assertIn("judge=early, rescue=not-run/not_run", ci_summary.render_markdown(summary))
-        projection.update(judge="late", rescue_ran=True, rescue_stage="span",
-                          single_photo_mode_verified=False, control_bar_wake_skipped=True)
-        for mark in ("A1+A2", "A1+A2+A3+A4"):
-            projection["frames"][3][4] = mark
-            self.assertEqual(summary, ci_summary.parse_summary(summary))
-        self.assertIn("judge=late, rescue=ran/span", ci_summary.render_markdown(summary))
-        projection["rescue_stage"] = "missing_pixels"
-        self.assertEqual(summary, ci_summary.parse_summary(summary))
-        self.assertIn("rescue=ran/missing_pixels", ci_summary.render_markdown(summary))
-        for field, defect in (("total_frames", True),
-                ("truncated", "yes"), ("rescue", "rejected"), ("wake", [0, float("inf")]),
-                ("indices", {"anchor": 5}), ("indices", {"private-name": 0}),
-                ("judge", "private-name"), ("rescue_stage", "https://private-host.local"),
-                ("rescue_ran", 1), ("single_photo_mode_verified", "private-name"),
-                ("control_bar_wake_skipped", 1), ("extra", "https://private-host.local")):
-            changed = copy.deepcopy(summary)
-            changed["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]["continue_watch"][field] = defect
-            with self.subTest(field=field), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^continue watch: invalid projection$"):
-                ci_summary.parse_summary(changed)
-        over_frames = copy.deepcopy(summary)
-        projection = over_frames["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]["continue_watch"]
-        projection.update(total_frames=81, frames=[[0, 0, 0, "MATCH", "A1", .7, 255, .1, False]] * 81)
-        self.assertLess(len(json.dumps(projection, separators=(",", ":")).encode()), 8192)
-        with self.assertRaisesRegex(ci_summary.ContractError, "^continue watch: invalid projection$"):
-            ci_summary.parse_summary(over_frames)
-        for column, defect in ((0, -1), (1, -.01), (2, 86401), (3, "private-name"),
-                (4, "A9"), (5, float("nan")), (6, 256), (7, 1.1), (8, "private-name")):
-            changed = copy.deepcopy(summary)
-            changed["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]["continue_watch"]["frames"][0][column] = defect
-            with self.subTest(column=column), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^continue watch: invalid projection$"):
-                ci_summary.parse_summary(changed)
-        oversized = copy.deepcopy(summary)
-        projection = oversized["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]["continue_watch"]
-        projection.update(total_frames=80, truncated=False, frames=[
-            [i + .123456789012345, i + .123456789012346, i + .123456789012347,
-             "UNRECOGNIZABLE", None, .123456789012345, 234.1234567890123, .123456789012345, False]
-            for i in range(80)])
-        self.assertGreater(len(json.dumps(projection, separators=(",", ":")).encode()), 8192)
-        with self.assertRaisesRegex(ci_summary.ContractError, "^continue watch: invalid projection$"):
-            ci_summary.parse_summary(oversized)
 
     def test_bounded_diagnostics_retains_over_budget_and_unavailable_collection_times(self):
         for measurements, details in (({"preparation": 5.001, "xcode": 10.001, "fixture": 2.001},
@@ -2359,175 +499,6 @@ print('parsed 3 nightly retry records without image or runner dependencies')
                     ci_summary.parse_summary(changed)
                 self.assertNotIn("private-", str(raised.exception))
 
-    def test_nightly_archive_receipt_accepts_historical_success_and_not_run_failures(self):
-        summary = archive_download_summary()
-        historical = {key: value for key, value in summary.items() if key != "archive_download"}
-        self.assertEqual(ci_summary.parse_summary(historical), historical)
-        self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
-        rendered = ci_summary.render_markdown(summary)
-        for detail in ("Archive download: action=success", "manifest.json=100", "build.tar.gz=200",
-                       "manifest digest=yes", "tar digest=yes", "size=yes", "transfer/extract=2.5 s",
-                       "gate=0.1 s", "free disk=1000 bytes", "failure=none"):
-            self.assertIn(detail, rendered)
-        optional_measurements = copy.deepcopy(summary)
-        optional_measurements["archive_download"].update(transfer_extract_seconds=None, gate_seconds=None, free_disk_bytes=None)
-        with tempfile.TemporaryDirectory() as directory:
-            ci_summary.write_summary(optional_measurements, Path(directory))
-            self.assertEqual(ci_summary.parse_summary(Path(directory, "summary.json").read_text()), optional_measurements)
-            for detail in ("transfer/extract=unavailable;", "gate=unavailable;", "free disk=unavailable;"):
-                self.assertIn(detail, Path(directory, "summary.md").read_text())
-        for reason in ("archive-member-missing",):
-            failed = copy.deepcopy(summary)
-            failed["status"] = "failed"
-            failed["population"].update(compiled=[], observed=[ci_summary.observation(
-                failed["population"]["declared"][0], "not-run", 0, reason=reason)])
-            failed["infrastructure"] = [{"code": reason, "message": reason}]
-            failed["archive_download"].update(failure_reason=reason, size_matched=None,
-                member_bytes={"manifest.json": None, "build.tar.gz": None}, digests_matched={"manifest": None, "tar": None},
-                transfer_extract_seconds=None, free_disk_bytes=None)
-            with self.subTest(reason=reason):
-                self.assertEqual(ci_summary.parse_summary(json.dumps(failed)), failed)
-                self.assertIn("failure=" + reason, ci_summary.render_markdown(failed))
-                self.assertIn("manifest.json=unavailable", ci_summary.render_markdown(failed))
-
-    def test_nightly_archive_receipt_rejects_invalid_fields_and_false_success(self):
-        from ci_ui_tests import MAX_ARCHIVE_BYTES
-        import yaml
-        base = archive_download_summary()
-        self.assertEqual(ci_summary.parse_summary(base), base)
-        workflow = yaml.safe_load(Path(ci_summary.__file__).resolve().parent.parent.joinpath(
-            ".github/workflows/ci-nightly.yml").read_text())
-        job_seconds = workflow["jobs"]["ui-shards"]["timeout-minutes"] * 60
-        push_identity = {key: value for key, value in base["identity"].items() if key not in {"event", "commit_sha"}}
-        push_identity.update(event="push", pushed_sha=base["identity"]["commit_sha"])
-        for key, maximum in (("artifact_id", 2**63 - 1), ("free_disk_bytes", 2**50),
-                             ("transfer_extract_seconds", job_seconds), ("gate_seconds", job_seconds)):
-            boundary = copy.deepcopy(base)
-            boundary["archive_download"][key] = maximum
-            self.assertEqual(ci_summary.parse_summary(boundary), boundary)
-        boundary = copy.deepcopy(base)
-        boundary["archive_download"]["member_bytes"]["build.tar.gz"] = MAX_ARCHIVE_BYTES
-        self.assertEqual(ci_summary.parse_summary(boundary), boundary)
-        mutations = [
-            (("archive_download",), None, "archive download receipt: expected fields " + str(sorted(base["archive_download"]))),
-            (("archive_download", "schema_version"), True, "unsupported archive download receipt"),
-            (("archive_download", "artifact_id"), True, "archive artifact ID: expected integer >= 1"),
-            (("archive_download", "artifact_id"), 0, "archive artifact ID: expected integer >= 1"),
-            (("archive_download", "artifact_id"), 2**63, "archive artifact ID exceeds bound"),
-            (("identity",), push_identity, "archive download receipt requires a nightly UI shard"),
-            (("source", "workflow_path"), ".github/workflows/ci-ui.yml", "archive download receipt requires a nightly UI shard"),
-            (("run", "job"), "ui-other", "archive download receipt requires a nightly UI shard"),
-            (("run", "tier"), "host", "archive download receipt requires a nightly UI shard"),
-            (("run", "shard"), None, "archive download receipt requires a nightly UI shard"),
-            (("archive_download", "action_outcome"), "warning", "invalid archive download action outcome"),
-            (("archive_download", "failure_reason"), "private-server.example", "invalid archive download failure reason"),
-            (("archive_download", "member_bytes"), {}, "archive member bytes: expected fields ['build.tar.gz', 'manifest.json']"),
-            (("archive_download", "member_bytes", "build.tar.gz"), -1, "archive member bytes: expected integer >= 0"),
-            (("archive_download", "member_bytes", "build.tar.gz"), MAX_ARCHIVE_BYTES + 1, "archive member bytes exceed bound"),
-            (("archive_download", "digests_matched"), {}, "archive digest matches: expected fields ['manifest', 'tar']"),
-            (("archive_download", "digests_matched", "tar"), "yes", "archive digest match must be boolean or null"),
-            (("archive_download", "size_matched"), 1, "archive size match must be boolean or null"),
-            (("archive_download", "transfer_extract_seconds"), -1, "duration must be finite and nonnegative"),
-            (("archive_download", "gate_seconds"), float("inf"), "duration must be finite and nonnegative"),
-            (("archive_download", "transfer_extract_seconds"), job_seconds + 1, "archive elapsed seconds exceed bound"),
-            (("archive_download", "gate_seconds"), job_seconds + 1, "archive elapsed seconds exceed bound"),
-            (("archive_download", "free_disk_bytes"), True, "archive free disk bytes: expected integer >= 0"),
-            (("archive_download", "free_disk_bytes"), 2**50 + 1, "archive free disk bytes exceed bound"),
-            (("archive_download", "action_outcome"), "failure", "successful archive gate requires complete integrity checks"),
-            (("archive_download", "member_bytes", "manifest.json"), 0, "successful archive gate requires complete integrity checks"),
-            (("archive_download", "member_bytes", "manifest.json"), None, "successful archive gate requires complete integrity checks"),
-            (("archive_download", "digests_matched", "manifest"), False, "successful archive gate requires complete integrity checks"),
-            (("archive_download", "size_matched"), None, "successful archive gate requires complete integrity checks"),
-        ]
-        for path, value, message in mutations:
-            summary = copy.deepcopy(base)
-            target = summary
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = value
-            if path == ("identity",):
-                # Keep the enclosing record valid so only the receipt's event scope is wrong.
-                summary["source"]["event"] = value["event"]
-                without_receipt = {key: value for key, value in summary.items() if key != "archive_download"}
-                self.assertEqual(ci_summary.parse_summary(without_receipt), without_receipt)
-            with self.subTest(path=path, value=value), self.assertRaisesRegex(ci_summary.ContractError, "^" + re.escape(message) + "$"):
-                ci_summary.parse_summary(summary)
-
-    def test_failed_archive_receipt_cannot_mask_execution_or_a_passing_producer(self):
-        summary = archive_download_summary()
-        summary["status"] = "failed"
-        summary["archive_download"]["failure_reason"] = "archive-hash-mismatch"
-        summary["archive_download"]["digests_matched"]["tar"] = False
-        summary["infrastructure"] = [{"code": "archive-hash-mismatch", "message": "archive-hash-mismatch"}]
-        case = summary["population"]["declared"][0]
-        summary["population"].update(compiled=[], observed=[ci_summary.observation(case, "not-run", 0)])
-        self.assertEqual(ci_summary.parse_summary(summary), summary)
-        for change in ("status", "diagnostic", "compiled", "observation"):
-            changed = copy.deepcopy(summary)
-            if change == "status":
-                changed["status"] = "passed"
-            elif change == "diagnostic":
-                changed["infrastructure"][0]["code"] = "ui-shard-preflight-failed"
-            elif change == "compiled":
-                changed["population"]["compiled"] = [case]
-            else:
-                changed["population"]["observed"] = [ci_summary.observation(case, "passed", 1)]
-            with self.subTest(change=change), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^failed archive gate requires failed infrastructure and no executed or compiled tests$"):
-                ci_summary.parse_summary(changed)
-
-    def test_strict_validator_receipts_are_optional_bounded_and_fail_only(self):
-        summary = valid_summary()
-        case = ci_summary.test_identity("strict", "tvos-person", device="tv", configuration="Debug",
-                                        suite="tvos-person", scenario="normal", fixture="a")
-        failed = ci_summary.observation(case, "failed", 1, exit_code=2)
-        summary["population"].update(declared=[case], compiled=[case], observed=[failed])
-        summary["status"] = "failed"
-        self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
-        message = "unreadable public glyph slot; slot 1 (horizontal); screenshot person-normal.png"
-        boundary = ("no public glyph; screenshot person-normal.png" + "; context unresolved" * 16
-                    + "; slot 1 (horizontal)" * 7)
-        self.assertEqual(512, len(boundary))
-        album_messages = ["unreadable public glyph slot: public photo colors are missing or mixed; "
-                          f"vertical axis, 0 completed slots; horizontal axis, 0 completed slots; screenshot album-play-{index}.png"
-                          for index in (1, 2, 3)]
-        added_messages = [message.replace("person-normal.png", name + ".png") for name in
-                          ("display-after", "person-normal-1", "person-nofaces-1", "vision-solo-1")]
-        for value in (message, "unresolved", "[redacted validator failure]", boundary, *album_messages, *added_messages):
-            failed["validator_failure_message"] = failed["attempts"][0]["validator_failure_message"] = value
-            self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
-        for value, prefix in ((None, "validator failure message"), ("", "validator failure message"),
-                              (boundary.replace("slot 1 (", "slot 10 (", 1), "validator failure message exceeds"),
-                              (message.replace("person-normal.png", "private-name.png"), "validator failure message is not public"),
-                              (message.replace("person-normal.png", "album-play-4.png"), "validator failure message is not public"),
-                              (message.replace("person-normal.png", "album-play-0.png"), "validator failure message is not public"),
-                              (message + "; server 192.0.2.1", "validator failure message is not public"),
-                              *[(message.replace("person-normal.png", name + ".png"), "validator failure message is not public")
-                                for name in ("display-after-1", "person-solo", "person-conflict-solo", "vision-solo",
-                                             "vision-solo-0", "vision-solo-2", "vision-solo-1-private")]):
-            with self.subTest(value=value):
-                broken = copy.deepcopy(summary)
-                broken["population"]["observed"][0]["validator_failure_message"] = value
-                with self.assertRaisesRegex(ci_summary.ContractError, prefix) as raised:
-                    ci_summary.parse_summary(json.dumps(broken))
-                self.assertNotIn("private-name", str(raised.exception))
-                self.assertNotIn("192.0.2.1", str(raised.exception))
-        for level, change in (("observation", "kind"), ("observation", "outcome"),
-                              ("attempt", "kind"), ("attempt", "outcome")):
-            with self.subTest(level=level, change=change):
-                broken = copy.deepcopy(summary)
-                item = broken["population"]["observed"][0]
-                item.pop("validator_failure_message")
-                item["attempts"][0].pop("validator_failure_message")
-                target = item if level == "observation" else item["attempts"][0]
-                target["validator_failure_message"] = message
-                if change == "kind":
-                    item["identity"] = ci_summary.test_identity("host", "format")
-                else:
-                    target["outcome"] = "passed"
-                with self.assertRaisesRegex(ci_summary.ContractError,
-                        "validator failure message requires a failed strict " + level + "$"):
-                    ci_summary.parse_summary(broken)
 
     def test_partitioned_python_execution_preserves_exact_discovery_and_runs_only_its_members(self):
         calls = []
@@ -2556,213 +527,80 @@ print('parsed 3 nightly retry records without image or runner dependencies')
             with self.subTest(manifest=manifest), self.assertRaises(ci_summary.ContractError):
                 run_python_tests.partition_suite(suite(), manifest)
 
-    def test_scoped_official_discovery_requires_bound_complete_compiled_and_executed_population(self):
-        summary = discovery_summary()
-        self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
-        changes = (
-            lambda value: value["compiled_evidence"].update(mode="unknown"),
-            lambda value: value["compiled_evidence"].update(schema_version=True),
-            lambda value: value["compiled_evidence"].update(first_exit_code=True),
-            lambda value: value["compiled_evidence"]["run"].update(attempt=2),
-            lambda value: value["compiled_evidence"]["identity"].update(head_sha="f" * 40),
-            lambda value: value["compiled_evidence"].update(plan_sha256="f" * 64),
-            lambda value: value["compiled_evidence"].update(first_exit_code=65),
-            lambda value: value["compiled_evidence"]["official_tests"]["devices"][0].update(modelName="iPad Pro"),
-            lambda value: value["compiled_evidence"]["official_tests"]["devices"][0].update(deviceId="other"),
-            lambda value: value["compiled_evidence"]["official_tests"]["testNodes"][0].update(children=[]),
-            lambda value: value["compiled_evidence"]["official_tests"]["testNodes"][0].update(name="immichSlidesTests"),
-            lambda value: value["population"].update(compiled=[]),
-            lambda value: value["population"].update(observed=[]),
-        )
-        for mutate in changes:
-            bad = copy.deepcopy(summary)
-            mutate(bad)
-            refresh_discovery_hash(bad)
-            with self.subTest(mutate=mutate), self.assertRaises(ci_summary.ContractError):
-                ci_summary.parse_summary(bad)
-        bad = copy.deepcopy(summary)
-        bad["compiled_evidence"]["official_tests"]["testNodes"][0]["children"].append(
-            copy.deepcopy(bad["compiled_evidence"]["official_tests"]["testNodes"][0]["children"][0]))
-        refresh_discovery_hash(bad)
-        with self.assertRaises(ci_summary.ContractError):
-            ci_summary.parse_summary(bad)
-        from ci_ui_discovery import MAX_EXPORT_BYTES, MAX_EXPORT_DEPTH, MAX_EXPORT_NODES
-        nested = None
-        for _ in range(MAX_EXPORT_DEPTH + 1):
-            nested = {"child": nested}
-        for padding in ("x" * (MAX_EXPORT_BYTES + 1), [None] * (MAX_EXPORT_NODES + 1), nested):
-            bad = copy.deepcopy(summary)
-            bad["compiled_evidence"]["official_tests"]["padding"] = padding
-            refresh_discovery_hash(bad)
-            with self.subTest(padding_type=type(padding).__name__), self.assertRaises(ci_summary.ContractError):
-                ci_summary.parse_summary(bad)
-        bad = copy.deepcopy(summary)
-        bad["hashes"]["manifests"]["ui-discovery"] = "f" * 64
-        with self.assertRaises(ci_summary.ContractError):
-            ci_summary.parse_summary(bad)
-        with tempfile.TemporaryDirectory() as directory:
-            record = Path(directory) / "summary.json"
-            record.write_text(json.dumps(bad))
-            result = subprocess.run([sys.executable, str(Path(ci_summary.__file__)), str(record)],
-                                    capture_output=True, text=True, timeout=30)
-            self.assertEqual(result.returncode, 1)
-            self.assertTrue(result.stdout.startswith("FAIL:"), result)
-            self.assertNotIn("Traceback", result.stderr)
-
-    def test_incomplete_official_discovery_writes_fail_only_diagnostics_with_raw_first_exit(self):
-        from run_fixture_ui_tests import write_fixture_summary
-        missing = ci_summary.test_identity("ui", "SettingsUITests/testMissing", platform="ios", device="iphone")
-        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
-        for code, export in ((1, "partial"), (65, "partial-unread"), (65, "empty"), (124, "missing")):
-            with self.subTest(code=code), tempfile.TemporaryDirectory() as directory:
-                summary = discovery_summary()
-                summary["status"] = "failed"
-                summary["compiled_evidence"]["first_exit_code"] = code
-                summary["population"]["declared"].append(missing)
-                if export == "empty":
-                    summary["compiled_evidence"]["official_tests"]["testNodes"][0]["children"] = []
-                    summary["population"]["compiled"] = []
-                    summary["population"]["observed"] = []
-                elif export == "missing":
-                    summary["compiled_evidence"]["official_tests"] = None
-                    summary["population"]["compiled"] = []
-                    summary["population"]["observed"] = []
-                elif export == "partial-unread":
-                    summary["population"]["compiled"] = []
-                    summary["population"]["observed"] = []
-                self.assertEqual(write_fixture_summary(summary, Path(directory)), code)
-                saved = ci_summary.parse_summary((Path(directory) / "summary.json").read_text())
-                undiscovered = [entry for entry in saved["population"]["observed"]
-                                if entry["identity"] not in saved["population"]["compiled"]]
-                self.assertTrue(undiscovered)
-                self.assertEqual({entry["outcome"] for entry in undiscovered}, {"timed-out" if code == 124 else "not-run"})
-                self.assertEqual({entry["attempts"][0]["exit_code"] for entry in undiscovered}, {code})
-                verdict = ci_verdict.evaluate_population(saved, saved["population"]["declared"], policy, environment="fixture")
-                self.assertEqual(verdict["status"], "failed")
-                self.assertEqual(sorted(map(ci_summary.identity_key, verdict["missing_compiled"])),
-                                 sorted(ci_summary.identity_key(entry["identity"]) for entry in undiscovered))
-                def claim_missing_passed(value):
-                    entry = value["population"]["observed"][-1]
-                    entry["outcome"] = entry["attempts"][0]["outcome"] = "passed"
-                    entry["attempts"][0]["exit_code"] = 0
-                for mutate in (lambda value: value.update(status="passed"),
-                               lambda value: value["compiled_evidence"].update(first_exit_code=0),
-                               lambda value: value["population"]["compiled"].append(missing),
-                               claim_missing_passed,
-                               lambda value: value["population"]["observed"][-1]["attempts"][0].update(exit_code=0)):
-                    bad = copy.deepcopy(saved)
-                    mutate(bad)
-                    refresh_discovery_hash(bad)
-                    with self.subTest(mutate=mutate), self.assertRaises(ci_summary.ContractError):
-                        ci_summary.parse_summary(bad)
-
-    def test_official_discovery_cannot_cover_nightly_full_or_deselected_tests(self):
-        for mutate in (lambda value: value["run"].update(shard="visual-a"),
-                       lambda value: value["source"].update(workflow_path=".github/workflows/ci-nightly.yml"),
-                       lambda value: value["population"]["deselected"].append({
-                           "identity": value["population"]["declared"][0], "reason": "not runnable", "owning_tier": "nightly"})):
-            bad = discovery_summary()
-            mutate(bad)
-            bad["compiled_evidence"]["run"] = dict(bad["run"])
-            refresh_discovery_hash(bad)
-            with self.subTest(mutate=mutate), self.assertRaises(ci_summary.ContractError):
-                ci_summary.parse_summary(bad)
-
-    def test_official_discovery_retains_first_failure_raw_exit_and_expected_skip(self):
-        for result, outcome, code in (("Failed", "failed", 65), ("Skipped", "skipped", 0)):
-            summary = discovery_summary()
-            summary['compiled_evidence']['first_exit_code'] = code
-            case = summary['compiled_evidence']['official_tests']['testNodes'][0]['children'][0]
-            case['result'] = result
-            summary['population']['observed'] = [ci_summary.observation(summary['population']['declared'][0],
-                outcome, 1, exit_code=code, reason='Official XCTest ' + result)]
-            summary['status'] = 'failed' if code else 'passed'
-            refresh_discovery_hash(summary)
-            with self.subTest(result=result):
-                self.assertEqual(ci_summary.parse_summary(summary), summary)
-            def change_consistent_duration(value):
-                observed = value['population']['observed'][0]
-                observed['duration_seconds'] = observed['attempts'][0]['duration_seconds'] = 2
-            for mutate in (lambda value: value['population']['observed'][0]['attempts'][0].update(exit_code=1),
-                           change_consistent_duration,
-                           lambda value: value['compiled_evidence'].update(first_exit_code=0 if code else 65)):
-                bad = copy.deepcopy(summary)
-                mutate(bad)
-                refresh_discovery_hash(bad)
-                with self.subTest(result=result, mutate=mutate), self.assertRaises(ci_summary.ContractError):
-                    ci_summary.parse_summary(bad)
 
     def test_host_platform_parts_preserve_every_identity_once(self):
-        from run_host_checks import MACOS_PYTHON_TESTS, host_partition
-        population = [ci_summary.test_identity("host", name) for name, _ in run_host_checks.HOST_CHECKS]
-        population += [ci_summary.test_identity("python", key) for key in MACOS_PYTHON_TESTS]
-        population.append(ci_summary.test_identity("python", "test_example.ExampleTests.testPortable"))
-        linux, macos = (host_partition(population, scope) for scope in ("linux", "macos"))
-        key = ci_summary.identity_key
-        self.assertFalse(set(map(key, linux)) & set(map(key, macos)))
-        self.assertEqual(sorted(map(key, population)), sorted(map(key, linux + macos)))
-        self.assertEqual({entry["key"] for entry in macos}, {"swift-format lint", *MACOS_PYTHON_TESTS})
-        removed = [entry for entry in population if entry["key"] not in MACOS_PYTHON_TESTS]
-        renamed = removed + [ci_summary.test_identity("python", "test_example.ExampleTests.testRenamedSwiftCase")]
-        for entries in (removed, renamed):
-            parts = [host_partition(entries, scope) for scope in ("linux", "macos")]
-            self.assertEqual(sorted(map(key, entries)), sorted(map(key, parts[0] + parts[1])))
-            self.assertEqual({entry["key"] for entry in parts[1]}, {"swift-format lint"})
-        for entries, scope in ((population, "unknown"), (population + population[:1], "linux"),
-                               ([entry for entry in population if entry["key"] != "workflow policy"], "linux")):
-            with self.subTest(scope=scope), self.assertRaises(ci_summary.ContractError):
-                host_partition(entries, scope)
-        from ci_population import python_identities, python_sources
-        python_identities(python_sources(Path(__file__).parent), macos_python_tests=MACOS_PYTHON_TESTS)
-        macos_key = "test_example.ExampleTests.testMacOS"
-        for decorator in ('skipUnless(sys.platform == "darwin", "macOS")',
-                          'skipIf(sys.platform != "darwin", "macOS")',
-                          'skipUnless("darwin" == sys.platform, "macOS")',
-                          'skipIf(not (sys.platform == "darwin"), "macOS")',
-                          'skipUnless(sys.platform in {"darwin"}, "macOS")',
-                          'skipUnless(IS_MACOS, "macOS")'):
-            sources = {"provider": 'import sys\nimport unittest as checks\n'
-                       'IS_MACOS = sys.platform == "darwin"\n'
-                       'class Cases:\n    @checks.' + decorator + '\n'
-                       '    def testMacOS(self): pass\n',
-                       "test_example": 'import unittest\nfrom provider import Cases\n'
-                       'class ExampleTests(Cases, unittest.TestCase): pass\n'}
-            with self.subTest(decorator=decorator):
-                self.assertEqual(python_identities(sources, macos_python_tests={macos_key}),
-                                 [ci_summary.test_identity("python", macos_key)])
-                with self.assertRaisesRegex(ci_summary.ContractError, macos_key + ".*MACOS_PYTHON_TESTS"):
-                    python_identities(sources, macos_python_tests=set())
-        for decorator in ('skipUnless(sys.platform in {"darwin", "linux"}, "POSIX")',
-                          'skipIf(sys.platform == "darwin", "non-macOS")'):
-            portable = dict(sources, provider=sources["provider"].replace(
-                'skipUnless(IS_MACOS, "macOS")', decorator))
-            with self.subTest(portable=decorator):
-                self.assertEqual(python_identities(portable, macos_python_tests=set()),
-                                 [ci_summary.test_identity("python", macos_key)])
+        with patch.object(run_host_checks, "MACOS_PYTHON_TESTS", frozenset({"synthetic.Sample.test_macos"})):
+            from run_host_checks import MACOS_PYTHON_TESTS, host_partition
+            population = [ci_summary.test_identity("host", name) for name, _ in run_host_checks.HOST_CHECKS]
+            population += [ci_summary.test_identity("python", key) for key in MACOS_PYTHON_TESTS]
+            population.append(ci_summary.test_identity("python", "test_example.ExampleTests.testPortable"))
+            linux, macos = (host_partition(population, scope) for scope in ("linux", "macos"))
+            key = ci_summary.identity_key
+            self.assertFalse(set(map(key, linux)) & set(map(key, macos)))
+            self.assertEqual(sorted(map(key, population)), sorted(map(key, linux + macos)))
+            self.assertEqual({entry["key"] for entry in macos}, {"swift-format lint", *MACOS_PYTHON_TESTS})
+            removed = [entry for entry in population if entry["key"] not in MACOS_PYTHON_TESTS]
+            renamed = removed + [ci_summary.test_identity("python", "test_example.ExampleTests.testRenamedSwiftCase")]
+            for entries in (removed, renamed):
+                parts = [host_partition(entries, scope) for scope in ("linux", "macos")]
+                self.assertEqual(sorted(map(key, entries)), sorted(map(key, parts[0] + parts[1])))
+                self.assertEqual({entry["key"] for entry in parts[1]}, {"swift-format lint"})
+            for entries, scope in ((population, "unknown"), (population + population[:1], "linux"),
+                                   ([entry for entry in population if entry["key"] != "workflow policy"], "linux")):
+                with self.subTest(scope=scope), self.assertRaises(ci_summary.ContractError):
+                    host_partition(entries, scope)
+            from ci_population import python_identities, python_sources
+            python_identities(python_sources(Path(__file__).parent), macos_python_tests=MACOS_PYTHON_TESTS)
+            macos_key = "test_example.ExampleTests.testMacOS"
+            for decorator in ('skipUnless(sys.platform == "darwin", "macOS")',
+                              'skipIf(sys.platform != "darwin", "macOS")',
+                              'skipUnless("darwin" == sys.platform, "macOS")',
+                              'skipIf(not (sys.platform == "darwin"), "macOS")',
+                              'skipUnless(sys.platform in {"darwin"}, "macOS")',
+                              'skipUnless(IS_MACOS, "macOS")'):
+                sources = {"provider": 'import sys\nimport unittest as checks\n'
+                           'IS_MACOS = sys.platform == "darwin"\n'
+                           'class Cases:\n    @checks.' + decorator + '\n'
+                           '    def testMacOS(self): pass\n',
+                           "test_example": 'import unittest\nfrom provider import Cases\n'
+                           'class ExampleTests(Cases, unittest.TestCase): pass\n'}
+                with self.subTest(decorator=decorator):
+                    self.assertEqual(python_identities(sources, macos_python_tests={macos_key}),
+                                     [ci_summary.test_identity("python", macos_key)])
+                    with self.assertRaisesRegex(ci_summary.ContractError, macos_key + ".*MACOS_PYTHON_TESTS"):
+                        python_identities(sources, macos_python_tests=set())
+            for decorator in ('skipUnless(sys.platform in {"darwin", "linux"}, "POSIX")',
+                              'skipIf(sys.platform == "darwin", "non-macOS")'):
+                portable = dict(sources, provider=sources["provider"].replace(
+                    'skipUnless(IS_MACOS, "macOS")', decorator))
+                with self.subTest(portable=decorator):
+                    self.assertEqual(python_identities(portable, macos_python_tests=set()),
+                                     [ci_summary.test_identity("python", macos_key)])
 
     def test_python_shards_balance_recorded_time_and_admit_new_methods_exactly_once(self):
-        population = [ci_summary.test_identity("host", "test conventions")]
-        population += [ci_summary.test_identity("python", key) for key in
-                       ("test_a.C.testOne", "test_a.C.testTwo", "test_b.C.testOne", "test_c.C.testOne")]
-        weights = {"python_modules": {"test_a": 8, "test_b": 6, "test_c": 2},
-                   "host_checks": {"test conventions": 4}}
-        parts = run_host_checks.python_shard_populations(population, weights)
-        self.assertEqual(parts, run_host_checks.python_shard_populations(list(reversed(population)), weights))
-        self.assertEqual([entry["key"] for entry in parts[0]], ["test conventions", "test_b.C.testOne"])
-        self.assertEqual([entry["key"] for entry in parts[1]], ["test_a.C.testOne", "test_a.C.testTwo", "test_c.C.testOne"])
-        for candidate in (population + [ci_summary.test_identity("python", "test_new.C.testAdded")], population[1:-1]):
-            shards = run_host_checks.python_shard_populations(candidate, weights)
-            keys = [ci_summary.identity_key(entry) for shard in shards for entry in shard]
-            self.assertEqual(sorted(keys), sorted(map(ci_summary.identity_key, candidate)))
-            self.assertEqual(len(keys), len(set(keys)))
-        with self.assertRaises(ci_summary.ContractError):
-            run_host_checks.python_shard_populations(population + population[-1:], weights)
-        mac = ci_summary.test_identity("python", sorted(run_host_checks.MACOS_PYTHON_TESTS)[0])
-        portable = ci_summary.test_identity("python", "portable.C.testAdded")
-        new_case_weights = {"python_modules": {mac["key"].split(".")[0]: 200, "portable": 3},
-                            "host_checks": {"test conventions": 4}}
-        self.assertEqual(run_host_checks.python_shard_populations([population[0], mac, portable], new_case_weights)[0],
-                         [population[0]])
+        with patch.object(run_host_checks, "MACOS_PYTHON_TESTS", frozenset({"synthetic.Sample.test_macos"})):
+            population = [ci_summary.test_identity("host", "test conventions")]
+            population += [ci_summary.test_identity("python", key) for key in
+                           ("test_a.C.testOne", "test_a.C.testTwo", "test_b.C.testOne", "test_c.C.testOne")]
+            weights = {"python_modules": {"test_a": 8, "test_b": 6, "test_c": 2},
+                       "host_checks": {"test conventions": 4}}
+            parts = run_host_checks.python_shard_populations(population, weights)
+            self.assertEqual(parts, run_host_checks.python_shard_populations(list(reversed(population)), weights))
+            self.assertEqual([entry["key"] for entry in parts[0]], ["test conventions", "test_b.C.testOne"])
+            self.assertEqual([entry["key"] for entry in parts[1]], ["test_a.C.testOne", "test_a.C.testTwo", "test_c.C.testOne"])
+            for candidate in (population + [ci_summary.test_identity("python", "test_new.C.testAdded")], population[1:-1]):
+                shards = run_host_checks.python_shard_populations(candidate, weights)
+                keys = [ci_summary.identity_key(entry) for shard in shards for entry in shard]
+                self.assertEqual(sorted(keys), sorted(map(ci_summary.identity_key, candidate)))
+                self.assertEqual(len(keys), len(set(keys)))
+            with self.assertRaises(ci_summary.ContractError):
+                run_host_checks.python_shard_populations(population + population[-1:], weights)
+            mac = ci_summary.test_identity("python", sorted(run_host_checks.MACOS_PYTHON_TESTS)[0])
+            portable = ci_summary.test_identity("python", "portable.C.testAdded")
+            new_case_weights = {"python_modules": {mac["key"].split(".")[0]: 200, "portable": 3},
+                                "host_checks": {"test conventions": 4}}
+            self.assertEqual(run_host_checks.python_shard_populations([population[0], mac, portable], new_case_weights)[0],
+                             [population[0]])
 
     def test_host_shard_merge_fails_closed_for_incomplete_or_unbound_execution(self):
         template = valid_summary()
@@ -3140,49 +978,50 @@ time.sleep(30)
                         run_host_checks.python_shard_weights()
 
     def test_internal_host_shards_run_static_checks_once_and_preserve_empty_shard_receipts(self):
-        python = [ci_summary.test_identity("python", "portable.Sample.test_rule"),
-                  ci_summary.test_identity("python", sorted(run_host_checks.MACOS_PYTHON_TESTS)[0])]
-        complete = [ci_summary.test_identity("host", name) for name, _ in run_host_checks.HOST_CHECKS] + python
-        weights = {"python_modules": {}, "host_checks": {}}
-        keys = lambda entries: sorted(map(ci_summary.identity_key, entries))
-        for scope in (None, "linux", "macos"):
-            recorded, static = [], []
-            expected = run_host_checks.host_partition(complete, scope) if scope else complete
-            for number in (1, 2):
-                with self.subTest(scope=scope, shard=number), tempfile.TemporaryDirectory() as directory:
-                    output = Path(directory)
-                    def steps(commands, *args, **kwargs):
-                        self.assertEqual(kwargs.get("deadline_monotonic"), 17)
-                        manifest = json.loads((output / "python-selection.json").read_text())
-                        self.assertEqual(manifest["inventory"], python)
-                        static.extend(name for name, _ in commands if name != "python tests")
-                        (output / "python-results.json").write_text(json.dumps({"compiled": manifest["selected"],
-                            "observed": [ci_summary.observation(entry, "passed", 0) for entry in manifest["selected"]]}))
-                        return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
-                                for name, _ in commands], []
-                    arguments = ["run_host_checks.py", "--python-shard", str(number), "--output-dir", str(output),
-                                 "--shard-deadline-path", str(output / "execution-deadline.json")]
-                    if scope:
-                        arguments += ["--host-platform", scope]
-                    with patch("sys.argv", arguments), \
-                            patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
-                            patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
-                            patch.object(run_host_checks, "python_shard_weights", return_value=weights), \
-                            patch.object(run_host_checks, "shard_execution_deadline", return_value=17), \
-                            patch("ci_population.python_identities", return_value=python), \
-                            patch.object(run_host_checks, "run_steps", side_effect=steps), \
-                            patch.object(run_host_checks, "run_parallel_shards", side_effect=AssertionError("unexpected fan-out")), \
-                            contextlib.redirect_stdout(io.StringIO()):
-                        self.assertEqual(run_host_checks.main(), 0)
-                    summary = ci_summary.parse_summary((output / "summary.json").read_text())
-                    population = summary["population"]
-                    self.assertEqual(summary["status"], "passed")
-                    self.assertEqual(keys(population["declared"]), keys(population["compiled"]))
-                    self.assertEqual(keys(population["compiled"]), keys([row["identity"] for row in population["observed"]]))
-                    recorded.extend(population["declared"])
-            self.assertEqual(keys(recorded), keys(expected))
-            self.assertEqual(sorted(static), sorted(entry["key"] for entry in expected
-                if entry["kind"] == "host" and entry["key"] != "python tests"))
+        with patch.object(run_host_checks, "MACOS_PYTHON_TESTS", frozenset({"synthetic.Sample.test_macos"})):
+            python = [ci_summary.test_identity("python", "portable.Sample.test_rule"),
+                      ci_summary.test_identity("python", sorted(run_host_checks.MACOS_PYTHON_TESTS)[0])]
+            complete = [ci_summary.test_identity("host", name) for name, _ in run_host_checks.HOST_CHECKS] + python
+            weights = {"python_modules": {}, "host_checks": {}}
+            keys = lambda entries: sorted(map(ci_summary.identity_key, entries))
+            for scope in (None, "linux", "macos"):
+                recorded, static = [], []
+                expected = run_host_checks.host_partition(complete, scope) if scope else complete
+                for number in (1, 2):
+                    with self.subTest(scope=scope, shard=number), tempfile.TemporaryDirectory() as directory:
+                        output = Path(directory)
+                        def steps(commands, *args, **kwargs):
+                            self.assertEqual(kwargs.get("deadline_monotonic"), 17)
+                            manifest = json.loads((output / "python-selection.json").read_text())
+                            self.assertEqual(manifest["inventory"], python)
+                            static.extend(name for name, _ in commands if name != "python tests")
+                            (output / "python-results.json").write_text(json.dumps({"compiled": manifest["selected"],
+                                "observed": [ci_summary.observation(entry, "passed", 0) for entry in manifest["selected"]]}))
+                            return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
+                                    for name, _ in commands], []
+                        arguments = ["run_host_checks.py", "--python-shard", str(number), "--output-dir", str(output),
+                                     "--shard-deadline-path", str(output / "execution-deadline.json")]
+                        if scope:
+                            arguments += ["--host-platform", scope]
+                        with patch("sys.argv", arguments), \
+                                patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                                patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                                patch.object(run_host_checks, "python_shard_weights", return_value=weights), \
+                                patch.object(run_host_checks, "shard_execution_deadline", return_value=17), \
+                                patch("ci_population.python_identities", return_value=python), \
+                                patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                                patch.object(run_host_checks, "run_parallel_shards", side_effect=AssertionError("unexpected fan-out")), \
+                                contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(run_host_checks.main(), 0)
+                        summary = ci_summary.parse_summary((output / "summary.json").read_text())
+                        population = summary["population"]
+                        self.assertEqual(summary["status"], "passed")
+                        self.assertEqual(keys(population["declared"]), keys(population["compiled"]))
+                        self.assertEqual(keys(population["compiled"]), keys([row["identity"] for row in population["observed"]]))
+                        recorded.extend(population["declared"])
+                self.assertEqual(keys(recorded), keys(expected))
+                self.assertEqual(sorted(static), sorted(entry["key"] for entry in expected
+                    if entry["kind"] == "host" and entry["key"] != "python tests"))
 
     def test_current_summary_round_trips_and_names_failures_in_markdown(self):
         summary = valid_summary()
@@ -3276,25 +1115,6 @@ time.sleep(30)
         with self.assertRaises(ci_summary.ContractError):
             ci_summary.parse_summary(summary)
 
-    def test_strict_keys_and_retry_attempts_preserve_full_identity_and_outcomes(self):
-        summary = valid_summary()
-        identity = ci_summary.test_identity("strict", "playback", device="iphone", configuration="Release",
-                                            suite="smoke", scenario="single", fixture="A")
-        summary["population"]["declared"] = summary["population"]["compiled"] = [identity]
-        entry = ci_summary.observation(identity, "failed", 1, exit_code=1)
-        entry["attempts"].append({"number": 2, "outcome": "passed", "duration_seconds": 2,
-                                  "exit_code": 0, "reason": None, "message": None})
-        entry["outcome"] = "flaky-passed"
-        entry["duration_seconds"] = 3
-        summary["population"]["observed"] = [entry]
-        ci_summary.parse_summary(summary)
-        entry["outcome"] = "failed"
-        entry["attempts"][1]["outcome"] = "skipped"
-        entry["attempts"][1]["reason"] = "retry fixture unavailable"
-        ci_summary.parse_summary(summary)
-        del identity["dimensions"]["fixture"]
-        with self.assertRaises(ci_summary.ContractError):
-            ci_summary.parse_summary(summary)
 
     def test_ci_identity_schemas_fail_closed(self):
         pr = {"schema_version": 1, "event": "pull_request", "repository": "sudoHG/immichSlides",
@@ -3372,39 +1192,40 @@ class HostResultTests(unittest.TestCase):
             self.assertNotIn(private, stream.getvalue() + raw.decode())
 
     def test_host_partitions_execute_the_complete_discovered_suite_once_and_keep_separate_records(self):
-        python = [ci_summary.test_identity("python", "portable.Sample.test_rule"),
-                  ci_summary.test_identity("python", next(iter(run_host_checks.MACOS_PYTHON_TESTS)))]
-        records = []
-        for scope in ("linux", "macos"):
-            with self.subTest(scope=scope), tempfile.TemporaryDirectory() as directory:
-                output = Path(directory) / "output"
-                def steps(commands, *args, **kwargs):
-                    manifest = json.loads((output / "python-selection.json").read_text())
-                    self.assertEqual(manifest["inventory"], python)
-                    self.assertEqual(len(manifest["selected"]), 1)
-                    (output / "python-results.json").write_text(json.dumps({"compiled": manifest["selected"],
-                        "observed": [ci_summary.observation(entry, "passed", 1) for entry in manifest["selected"]]}))
-                    invocation = next(command for name, command in commands if name == "python tests")
-                    self.assertIn("--selection-path", invocation)
-                    return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
-                            for name, command in commands], []
-                with patch("sys.argv", ["run_host_checks.py", "--python-shards", "1", "--host-platform", scope, "--output-dir", str(output)]), \
-                        patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
-                        patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
-                        patch("ci_population.python_identities", return_value=python), \
-                        patch.object(run_host_checks, "run_steps", side_effect=steps), \
-                        patch.object(run_host_checks, "run_parallel_shards", side_effect=AssertionError("unexpected fan-out")), \
-                        contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(run_host_checks.main(), 0)
-                summary = ci_summary.parse_summary((output / "summary.json").read_text())
-                self.assertEqual(summary["run"]["job"], "host-" + scope)
-                self.assertEqual({ci_summary.identity_key(entry) for entry in summary["population"]["declared"]},
-                                 {ci_summary.identity_key(entry) for entry in summary["population"]["compiled"]})
-                self.assertEqual({ci_summary.identity_key(entry) for entry in summary["population"]["declared"]},
-                                 {ci_summary.identity_key(entry["identity"]) for entry in summary["population"]["observed"]})
-                records.extend(summary["population"]["declared"])
-        self.assertEqual(len(records), len(run_host_checks.HOST_CHECKS) + len(python))
-        self.assertEqual(len({ci_summary.identity_key(entry) for entry in records}), len(records))
+        with patch.object(run_host_checks, "MACOS_PYTHON_TESTS", frozenset({"synthetic.Sample.test_macos"})):
+            python = [ci_summary.test_identity("python", "portable.Sample.test_rule"),
+                      ci_summary.test_identity("python", next(iter(run_host_checks.MACOS_PYTHON_TESTS)))]
+            records = []
+            for scope in ("linux", "macos"):
+                with self.subTest(scope=scope), tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory) / "output"
+                    def steps(commands, *args, **kwargs):
+                        manifest = json.loads((output / "python-selection.json").read_text())
+                        self.assertEqual(manifest["inventory"], python)
+                        self.assertEqual(len(manifest["selected"]), 1)
+                        (output / "python-results.json").write_text(json.dumps({"compiled": manifest["selected"],
+                            "observed": [ci_summary.observation(entry, "passed", 1) for entry in manifest["selected"]]}))
+                        invocation = next(command for name, command in commands if name == "python tests")
+                        self.assertIn("--selection-path", invocation)
+                        return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
+                                for name, command in commands], []
+                    with patch("sys.argv", ["run_host_checks.py", "--python-shards", "1", "--host-platform", scope, "--output-dir", str(output)]), \
+                            patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                            patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                            patch("ci_population.python_identities", return_value=python), \
+                            patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                            patch.object(run_host_checks, "run_parallel_shards", side_effect=AssertionError("unexpected fan-out")), \
+                            contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(run_host_checks.main(), 0)
+                    summary = ci_summary.parse_summary((output / "summary.json").read_text())
+                    self.assertEqual(summary["run"]["job"], "host-" + scope)
+                    self.assertEqual({ci_summary.identity_key(entry) for entry in summary["population"]["declared"]},
+                                     {ci_summary.identity_key(entry) for entry in summary["population"]["compiled"]})
+                    self.assertEqual({ci_summary.identity_key(entry) for entry in summary["population"]["declared"]},
+                                     {ci_summary.identity_key(entry["identity"]) for entry in summary["population"]["observed"]})
+                    records.extend(summary["population"]["declared"])
+            self.assertEqual(len(records), len(run_host_checks.HOST_CHECKS) + len(python))
+            self.assertEqual(len({ci_summary.identity_key(entry) for entry in records}), len(records))
 
     def test_local_repository_metadata_accepts_remote_forms_and_missing_origin(self):
         remotes = [

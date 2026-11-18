@@ -248,7 +248,6 @@ class LocalModeTests(unittest.TestCase):
                               "    return 0 if private == (os.environ.get('IMMICH_TEST_EXPECT_PRIVATE') == '1') "
                               "and os.environ.get('IMMICH_TEST_API_KEY') == 'explicit' else 1\n"
                               "if __name__ == '__main__':\n    raise SystemExit(local_main(main, __file__))\n")
-            shutil.copyfile(runner, scripts / "ci_ui_tests.py")
             (root / ".gitignore").write_text("Config/env.xcconfig\n")
             (root / "immichSlides.xcodeproj").mkdir()
             (root / "immichSlides.xcodeproj/project.pbxproj").write_text("synthetic project")
@@ -334,19 +333,6 @@ class LocalModeTests(unittest.TestCase):
                                                env=test_environment, capture_output=True, text=True, timeout=15)
                     self.assertEqual(completed.returncode, 0, completed.stderr)
                     self.assertIn(label + "=" + str((scripts / filename).resolve()), completed.stdout)
-            written = Path(directory, "written")
-            written.mkdir()
-            receipt_path = written / "local-snapshot.json"
-            receipt_path.write_text("earlier run receipt\n")
-            ui_runner = scripts / "ci_ui_tests.py"
-            for arguments, expected in ((["check-upload", "--output-dir", str(written)], 0),
-                                        (["run", "--shard", "check-upload", "--output-dir", str(written)], 2)):
-                with self.subTest(arguments=arguments):
-                    completed = subprocess.run([sys.executable, "-B", str(ui_runner), *arguments, "--config",
-                                                "IMMICH_TEST_API_KEY=explicit"], cwd=root, env=test_environment,
-                                               capture_output=True, text=True, timeout=15)
-                    self.assertEqual(completed.returncode, expected, completed.stderr)
-                    self.assertEqual(receipt_path.read_text(), "earlier run receipt\n")
 
     def test_slow_process_probe_does_not_interrupt_a_running_child(self):
         probe = ci_local.process_states

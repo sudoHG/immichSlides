@@ -3,8 +3,6 @@
 import json
 import math
 import re
-from contextlib import contextmanager
-from contextvars import ContextVar
 from copy import deepcopy
 
 from ci_summary import BOUNDED_DIAGNOSTICS_FIELD
@@ -22,46 +20,11 @@ FAILURE_CLASSES = frozenset({"interval_readback", "hidden_controls", "scene_iden
                              "evidence_capture", "probe_readback", "fixture_response", "exif_visibility",
                              "exif_correspondence"})
 DIAGNOSTIC_FIELDS = frozenset({"failure_phase", "failure_class"})
-APP_TIMELINE_METHODS = frozenset({"AccessLifecycleIOSUITests/testPauseNextContinueAppTimeline",
-                                "AccessLifecycleTVOSUITests/testTVOSPauseNextContinueAppTimeline"})
-PUBLIC_FAILURE_MESSAGE_METHOD_BY_SUITE = {
-    "ios-lifecycle-pause-timeline": "AccessLifecycleIOSUITests/testPauseNextContinueAppTimeline",
-    "tvos-lifecycle-pause-timeline": "AccessLifecycleTVOSUITests/testTVOSPauseNextContinueAppTimeline",
-    "tvos-flow": "StrictE2ETVOSFlowUITests/testTVOSFirstBootModeSelectionAndCorePlayback",
-}
-TVOS_PUBLICATION_FAILURE_PREFIX = "The index probe must change after a playback action."
-TVOS_PUBLICATION_FAILURE_PATTERN = (re.escape(TVOS_PUBLICATION_FAILURE_PREFIX)
-    + r" advanceObserved=(?:true|false) stable=(?:true|false) referencesMatch=(?:true|false)")
-APP_TIMELINE_FAILURE_REDACTED = "App timeline: unrecognized failure (redacted)"
-APP_TIMELINE_FAILURE_REASONS = frozenset({
-    "missing evidence directory", "case nonce mismatch", "missing required event",
-    "runner and App uptime domains do not align", "missing action receipt",
-    "content contradicts stable or frozen timeline", "missing frozen content anchor",
-    "frozen photo pixels changed", "unreadable photo pixels", "missing conclusive content proof",
-    "Next did not change photo", "pause hold shorter than T+2", "missing stable event", "missing SIGSTOP handshake",
-    "pause hold lacks unchanged frozen evidence", "pause hold lacks same-overlay pixel reference",
-    "paused manual transition exceeded one target", "automatic change during paused manual navigation",
-    "missing timelineStarted", "noncontiguous sequence", "nonce mismatch", "nonmonotonic uptime",
-    "pause exception misuse", "frame advanced during pause", "missing Continue receipt",
-    "missing unambiguous fade onset", "Continue onset outside T±2", "new photo not stable within onset+4",
-    "midpoint Pause did not cover T-2", "automatic transition before midpoint Pause",
-    "Pause must reach the App.", "focus must reach Play/Pause.", "focus must reach Next.",
-})
-VALIDATOR_FAILURE_FIELD = "validator_failure_message"
-VALIDATOR_FAILURE_MAX_LENGTH = 512
-VALIDATOR_FAILURE_REDACTED = "[redacted validator failure]"
 FIRST_FAILURE_FIELD = "first_failure"
 FIRST_FAILURE_MAX_BYTES = 8192
 FIRST_FAILURE_MAX_SECONDS = 86400
 FIRST_FAILURE_MAX_IMAGE_BYTES = 1024 * 1024
 FIRST_FAILURE_MAX_IMAGE_SIDE = 1536
-ALBUM_CAPTURE_GATE_BOOLEANS = ("stable", "paused", "entry_hint_hidden", "advanced", "layers_changed", "manifest_complete")
-ALBUM_CAPTURE_GATE_PHASES = ("unknown", "empty", "stablePhoto", "grace", "transition", "loading",
-                             "incomingFromLoading", "paused", "sourceError")
-ALBUM_CAPTURE_REJECTIONS = ("phase", "layer-roles", "loading-visible", "opacity-count", "opacity-value",
-                            "motion-progress-count", "motion-progress-range", "manifest")
-ALBUM_CAPTURE_MAX_POLLS = 16
-NATIVE_TAP_FAILURE_CLASSES = ("event-synthesis", "snapshot-timeout", "application-process")
 # The only reviewed element table. Fixture runners supply this vocabulary to the test-only recorder.
 FIRST_FAILURE_ELEMENTS = (
     "unknown", "app-window", "system.reduce-motion", "simulator",
@@ -84,14 +47,7 @@ FIRST_FAILURE_ACTIONS = ("unknown", "none", "tap", "select", "up", "down", "left
     "play-pause", "rotate", "launch", "activate", "terminate", "type", "adjust")
 FIRST_FAILURE_TIMING_FIELDS = ("since_action_issued_seconds", "since_action_returned_seconds", "action_duration_seconds",
     "wait_elapsed_seconds", "deadline_seconds", "capture_request_seconds", "capture_return_seconds", "state_age_seconds")
-NATIVE_ACTIVITY_FIELDS = ("pre_event_idle", "find_window", "synthesize_event", "post_event_idle", "ax_root_acquisition")
-_validator_input = ContextVar("first_failure_validator_input", default=None)
-_validator_enabled = ContextVar("first_failure_validator_enabled", default=False)
-_validator_capture = ContextVar("first_failure_validator_capture", default=None)
 
-ENVIRONMENT_LIMIT_FIELD = "environment_limit"
-ENVIRONMENT_POLICY_VERSION = 4
-EMITTED_ENVIRONMENT_POLICY_VERSION = 5
 FAILURE_MESSAGES_FIELD = "failure_messages"
 MAX_FAILURE_MESSAGES = 16
 UNRECOGNIZED_FAILURE_MESSAGE = "[unrecognized XCTest failure]"
@@ -158,167 +114,8 @@ SMOKE_FLOW_FAILURE_MESSAGES = frozenset(
         "required element must be available: ", "required element must be ready: ", "control appears: ",
         "remote focus moves toward ", "remote cannot focus ",
     ) for identifier in SMOKE_FLOW_CONTROL_IDS})
-ENVIRONMENT_IDLE_MAX_PERCENT = 5
 # Bound to AccessLifecycleContract.hiddenControlStabilitySeconds by the source audit.
-FIRST_WAKE_HIDDEN_STABILITY_SECONDS = 0.6
-ENVIRONMENT_ALBUM_SETTLING_PHASES = frozenset({"transition", "incomingFromLoading"})
 # Retained v1/v2 UI waits keep their original interpretation.
-ENVIRONMENT_WAIT_STEPS = {
-    **{("mode_selection", "navigation", "mode-card", element): "mode"
-       for element in ("mode.random.button", "mode.filtered.button")},
-    ("mode_selection", "navigation", "mode-continue", "mode.continue.button"): "mode",
-    ("playback_entry", "navigation", "query-element", "slideshow.control.playPause.button"): "playback",
-    **{("settings_navigation", "navigation", step, "slideshow.control.settings.button"): "playback"
-       for step in ("query-element", "select")},
-    **{(phase, "hidden_controls", step, element): "playback"
-       for phase, steps in (("control_action", ("query-element", "reveal-controls")),
-                            ("hidden_controls", ("query-element", "reveal-controls")),
-                            ("interval_setup", ("query-element",)))
-       for step in steps
-       for element in ("slideshow.control.settings.button", "slideshow.control.previous.button",
-                       "slideshow.control.playPause.button", "slideshow.control.next.button", "slideshow.hiddenWakeReceiver")},
-}
-ENVIRONMENT_WAIT_STEPS_V3 = {
-    **ENVIRONMENT_WAIT_STEPS,
-    **{(phase, "navigation", "mode-departure", "mode.continue.button"): "mode"
-       for phase in ("mode_selection", "playback_entry")},
-}
-ENVIRONMENT_WAIT_STEPS_V4 = {
-    **ENVIRONMENT_WAIT_STEPS_V3,
-    **{("mode_selection", "navigation", "save-password-prompt", element): "mode"
-       for element in ("mode.random.button", "mode.filtered.button")},
-}
-
-
-def environment_failure_projection(receipt, *, policy_version=ENVIRONMENT_POLICY_VERSION):
-    return {"source": receipt["source"], "step": receipt["step"], "element": receipt["element"], "action": receipt["action"],
-        "app": receipt["state"]["app"],
-        "surface": receipt["state"]["surface"],
-        "control_bar": receipt["state"]["control_bar"],
-        "scene_status": receipt["state"]["scene_status"],
-        **{key: receipt["timing"][key] for key in ("wait_elapsed_seconds", "deadline_seconds", "action_duration_seconds")},
-        "post_event_idle": receipt.get("native_activity_seconds", {}).get("post_event_idle"),
-        **({key: receipt.get("native_activity_seconds", {}).get(key)
-            for key in ("pre_event_idle", "ax_root_acquisition")} if policy_version == 5 else {}),
-        **({"gate": dict(receipt["gate"])} if "gate" in receipt else {})}
-
-
-def environment_timing(failure, phase, failure_class, *, policy_version=ENVIRONMENT_POLICY_VERSION):
-    album_capture = (policy_version in {2, 3, 4} and phase == "visible_scene_capture" and failure_class == "probe_readback"
-        and failure["step"] == "wait-scene" and failure["element"] == "slideshow.scenePresentation.contract.summary")
-    if album_capture:
-        gate = failure.get("gate", {})
-        if not (gate.get("kind") == "album-capture" and gate.get("stable") is False
-                and gate.get("paused") is True and gate.get("entry_hint_hidden") is True
-                and gate.get("manifest_complete") is True
-                and gate.get("advanced") is True and gate.get("layers_changed") is True
-                and gate.get("phase") in ENVIRONMENT_ALBUM_SETTLING_PHASES):
-            return False
-    wait_steps = (ENVIRONMENT_WAIT_STEPS_V4 if policy_version == 4
-        else ENVIRONMENT_WAIT_STEPS_V3 if policy_version == 3 else ENVIRONMENT_WAIT_STEPS)
-    expected_surface = "playback" if album_capture else wait_steps.get(
-        (phase, failure_class, failure["step"], failure["element"]))
-    if (failure["source"] != "xctest" or failure["app"] != "running-foreground"
-            or failure["scene_status"] in {"BLACK", "BLANK"}
-            or failure["scene_status"] == "UNRECOGNIZABLE" and failure["surface"] in {"playback", "unknown"}
-            or failure["surface"] == "unknown"
-            or failure["surface"] != expected_surface
-            or failure_class == "hidden_controls" and failure["control_bar"] == "visible"):
-        return False
-    elapsed, deadline = failure["wait_elapsed_seconds"], failure["deadline_seconds"]
-    # No receipt field proves a following successful action readback; native idle alone stays red.
-    return elapsed is not None and deadline is not None and deadline > 0 and elapsed >= deadline
-
-
-def validate_environment_limit(proof):
-    from ci_summary import fields, require
-    from ci_bounded_diagnostics import validate_case_resources
-    require(isinstance(proof, dict) and type(proof.get("policy_version")) is int
-            and proof["policy_version"] in {1, 2, 3, 4, 5}, "environment limit: unsupported policy version")
-    names = {"schema_version", "policy_version", "runner_hosted", "failure_phase", "failure_class", "failure", "resources"}
-    if isinstance(proof, dict) and proof.get("policy_version") == 5:
-        names |= {"kind", FAILURE_MESSAGES_FIELD}
-    fields(proof, names,
-           "environment limit")
-    require(type(proof["schema_version"]) is int and proof["schema_version"] == 1
-            and proof["runner_hosted"] is True, "environment limit: hosted evidence required")
-    if proof["policy_version"] == 5:
-        validate_environment_limit_v5(proof)
-        return
-    failure = proof["failure"]
-    failure_fields = {"source", "step", "element", "action", "app", "surface", "control_bar", "scene_status", "wait_elapsed_seconds", "deadline_seconds",
-                      "action_duration_seconds", "post_event_idle"}
-    if proof["policy_version"] in {2, 3, 4} and isinstance(failure, dict) and "gate" in failure:
-        failure_fields.add("gate")
-    fields(failure, failure_fields, "environment failure")
-    receipt = unavailable_first_failure("xctest")
-    receipt.update(source=failure["source"], step=failure["step"], element=failure["element"], action=failure["action"])
-    receipt["state"]["app"] = failure["app"]
-    receipt["state"]["surface"] = failure["surface"]
-    receipt["state"]["control_bar"] = failure["control_bar"]
-    receipt["state"]["scene_status"] = failure["scene_status"]
-    if "gate" in failure:
-        receipt["gate"] = failure["gate"]
-    for key in ("wait_elapsed_seconds", "deadline_seconds", "action_duration_seconds"):
-        receipt["timing"][key] = failure[key]
-    if failure["source"] == "xctest":
-        receipt["native_activity_seconds"] = dict.fromkeys(NATIVE_ACTIVITY_FIELDS)
-        receipt["native_activity_seconds"]["post_event_idle"] = failure["post_event_idle"]
-    validate_first_failure(receipt)
-    require(isinstance(proof["failure_phase"], str) and isinstance(proof["failure_class"], str)
-            and environment_timing(failure, proof["failure_phase"], proof["failure_class"], policy_version=proof["policy_version"]),
-            "environment limit: failure is not an eligible timing wait")
-    resource = proof["resources"]
-    validate_case_resources([resource])
-    samples = resource["failure_samples"]
-    require(len(samples) >= 2 and all(sample["idle_percent"] is not None
-            and sample["idle_percent"] <= ENVIRONMENT_IDLE_MAX_PERCENT for sample in samples)
-            and any(sample["elapsed_seconds"] < resource["first_failure_elapsed_seconds"] for sample in samples)
-            and any(sample["elapsed_seconds"] > resource["first_failure_elapsed_seconds"] for sample in samples),
-            "environment limit: insufficient starvation evidence")
-
-
-def environment_limit_evidence(summary, entry, resources, *, runner_hosted, policy_version=None):
-    """Project checked case evidence; absence or ambiguity always retains the raw failure."""
-    from ci_summary import require
-    try:
-        version = ENVIRONMENT_POLICY_VERSION if policy_version is None else policy_version
-        if version == 5:
-            return environment_limit_evidence_v5(summary, entry, resources, runner_hosted=runner_hosted)
-        require(runner_hosted is True and summary["source"]["workflow_path"] == ".github/workflows/ci-nightly.yml"
-                and summary["source"]["event"] in {"schedule", "workflow_dispatch"}
-                and summary["run"]["tier"] == "strict" and summary["run"]["job"] == "nightly-strict",
-                "environment limit: outside hosted nightly strict scope")
-        require(entry["outcome"] == "failed" and entry["identity"]["kind"] == "strict"
-                and VALIDATOR_FAILURE_FIELD not in entry, "environment limit: not a timing failure")
-        receipt = public_first_failure(entry.get(FIRST_FAILURE_FIELD))
-        require(receipt is not None, "environment limit: missing first failure")
-        candidates = [resource for resource in resources if resource.get("first_failure_elapsed_seconds") is not None]
-        require(len(candidates) == 1, "environment limit: ambiguous failure resources")
-        proof = {"schema_version": 1, "policy_version": ENVIRONMENT_POLICY_VERSION if policy_version is None else policy_version,
-            "runner_hosted": True, "failure_phase": entry.get("failure_phase"),
-            "failure_class": entry.get("failure_class"), "failure": environment_failure_projection(receipt),
-            "resources": candidates[0]}
-        validate_environment_limit(proof)
-        return proof
-    except (ValueError, TypeError, KeyError, AttributeError):
-        return None
-
-
-def render_environment_limit(proof):
-    try:
-        validate_environment_limit(proof)
-    except (ValueError, TypeError, KeyError, AttributeError):
-        return "RED: invalid or obsolete environment-limit proof under the current policy"
-    resource = proof["resources"]
-    failure = proof["failure"]
-    if proof.get("kind") == "xctest-tool":
-        return "ENVIRONMENT-LIMITED (yellow; raw failure retained): XCTest/Apple tool; " + "; ".join(proof[FAILURE_MESSAGES_FIELD])
-    return (f"ENVIRONMENT-LIMITED (yellow; raw failure retained): {proof['failure_phase']}/{proof['failure_class']}; "
-        f"wait={failure['wait_elapsed_seconds']}s / deadline={failure['deadline_seconds']}s; "
-        f"post-event-idle={failure['post_event_idle']}s; failure at {resource['first_failure_elapsed_seconds']}s; "
-        + "; ".join(f"t={sample['elapsed_seconds']}s idle={sample['idle_percent']}% load1={sample['load_1m']} "
-                    f"app-cpu={sample['cpu_percent']['app']}%" for sample in resource["failure_samples"]))
 
 
 def xctest_tool_class(message):
@@ -351,7 +148,6 @@ def validate_failure_messages(messages):
     prefixes = {prefix for prefix, _, _ in PREFIX_RULES}
     require(all(isinstance(message, str) and (message in prefixes or message == UNRECOGNIZED_FAILURE_MESSAGE
                 or message in SMOKE_FLOW_FAILURE_MESSAGES
-                or re.fullmatch(TVOS_PUBLICATION_FAILURE_PATTERN, message)
                 or reviewed_native_failure(message)
                 or xctest_tool_class(message) is not None) for message in messages),
             "failure messages: unreviewed public message")
@@ -370,27 +166,10 @@ def public_failure_messages(messages):
         if text in SMOKE_FLOW_FAILURE_MESSAGES:
             public.append(text)
             continue
-        if text is not None and re.fullmatch(TVOS_PUBLICATION_FAILURE_PATTERN, text):
-            public.append(text)
-            continue
         rule = next((rule for rule in PREFIX_RULES if text is not None and text.startswith(rule[0])), None)
         public.append(rule[0] if rule is not None and xctest_tool_class(rule[0]) is None
                       else UNRECOGNIZED_FAILURE_MESSAGE)
     return public
-
-
-def attach_failure_messages(observed, official):
-    """A retry cannot claim a single-invocation complete list."""
-    diagnostics = {first_failure_test_key(key): value for key, value in test_node_diagnostics(official).items()}
-    for entry in observed:
-        entry.pop(FAILURE_MESSAGES_FIELD, None)
-        for attempt in entry["attempts"]:
-            attempt.pop(FAILURE_MESSAGES_FIELD, None)
-        if entry["outcome"] != "failed" or len(entry["attempts"]) != 1:
-            continue
-        detail = diagnostics.get(first_failure_test_key(entry["identity"]["key"]), {})
-        if FAILURE_MESSAGES_FIELD in detail:
-            entry[FAILURE_MESSAGES_FIELD] = entry["attempts"][0][FAILURE_MESSAGES_FIELD] = deepcopy(detail[FAILURE_MESSAGES_FIELD])
 
 
 def failure_messages_diagnostics(messages):
@@ -398,193 +177,6 @@ def failure_messages_diagnostics(messages):
     if None not in kinds and len(kinds) == 1:
         return {"failure_phase": "unknown", "failure_class": kinds.pop()}
     return classify_messages(messages)
-
-
-def environment_timing_v5(failure, failure_class, messages):
-    """Class/step semantics with functional target/surface guards."""
-    if failure["source"] != "xctest" or failure["app"] != "running-foreground" or len(messages) != 1:
-        return False
-    message = messages[0]
-    # Credential focus failures are always red, even with a complete exhausted-wait receipt.
-    if message in {
-        "First-boot input must have keyboard focus before typing.",
-        "Failed to synthesize event: Neither element nor any descendant has keyboard focus.",
-    }:
-        return False
-    step = failure["step"]
-    if (failure["scene_status"] in {"BLACK", "BLANK"} or failure["surface"] == "unknown"
-            or failure_class == "hidden_controls" and failure["control_bar"] == "visible"):
-        return False
-    # Target surfaces are functional context, independent of the old phase/class/step tuples.
-    expected_surface = next((surface for prefix, surface in (
-        ("slideshow.", "playback"), ("mode.", "mode"), ("firstboot.", "firstboot"),
-        ("settings.playback.", "playback-settings")) if failure["element"].startswith(prefix)), None)
-    if (failure["element"] in {"app-window", "unknown", "system.reduce-motion", "simulator", "BackButton"}
-            or failure["element"].startswith(("settings.item.", "settings.cache."))):
-        expected_surface = "playback"
-    if message == "A configured cold launch must go straight to the playback page.":
-        expected_surface = "playback"
-    if failure["surface"] != expected_surface:
-        return False
-    # These assertions describe a contradiction, even if an earlier wait used its deadline.
-    contradictions = ("Chose filter but reached the playback page, so the mode card tap did not register.",
-        "Playback page after uninstall means a dirty install container;", "Select must not accidentally hit the API Key help sheet.",
-        "A cold launch with saved settings must not return to the first-boot page.",
-        "Connection test showed a failure alert:", "The iOS filter summary should no longer use a bottom back button,",
-        "After changing the display mode, playback must still be on screen in the same live process.",
-        "Album Next must advance the paused scene within the playback capture budget.",
-        "Next must be tappable twice right after entering the slideshow, before old image requests finish.",
-        "The first next must advance the playback cursor.", "The second next must advance the playback cursor further.",
-        "Must not press twice to mask the first wake", "Do not tap again and toggle playback")
-    if message in contradictions:
-        return False
-    eligible = (failure_class in {"navigation", "hidden_controls", "focus"}
-        and step in {"query-element", "select", "focus", "reveal-controls", "mode-card", "mode-continue",
-                     "mode-departure", "save-password-prompt", "wait-scene", "settings-readback", "launch-app"})
-    if message == "The control bar is not hidden yet; cannot verify the first wake.":
-        eligible = (eligible and failure.get("control_bar") == "hidden"
-            and failure["deadline_seconds"] is not None
-            and failure["deadline_seconds"] >= FIRST_WAKE_HIDDEN_STABILITY_SECONDS)
-    if failure_class == "control_state":
-        eligible = step == "wait-scene" and message in {
-            "After pausing, the control value must be play.",
-            "Album capture preparation must observe paused playback after one Pause."}
-        if message == "Late image preparation must turn Autoplay off.":
-            eligible = (step == "select" and failure["element"] == "settings.playback.autoPlay.toggle"
-                and failure.get("autoplay") == "off")
-    elif failure_class == "timing_window":
-        eligible = step in {"wait-scene", "rotate"} and (
-            " did not stabilize within the " in message
-            or message == "Album capture preparation must reach a stable scene before Pause.")
-        if message == "rotation-landscape-stable did not stabilize within the " and step == "capture-frame":
-            eligible = failure["element"] == "app-window" and failure["scene_status"] == "MATCH"
-    elif failure_class == "probe_readback":
-        eligible = (step == "query-element" and message == "Play/pause value must be readable before acting.")
-        if message == (TVOS_PUBLICATION_FAILURE_PREFIX
-                + " advanceObserved=true stable=false referencesMatch=true"):
-            eligible = (step == "query-element" and failure["element"] == "slideshow.scenePresentation.contract.summary"
-                and failure["scene_status"] == "TRANSITION" and failure["deadline_seconds"] == 3)
-        if message == "Album capture preparation must reach a complete paused scene within the playback capture budget.":
-            gate = failure.get("gate", {})
-            eligible = (step == "wait-scene" and failure["element"] == "slideshow.scenePresentation.contract.summary"
-                and all(gate.get(key) is True for key in (
-                "paused", "entry_hint_hidden", "advanced", "layers_changed", "manifest_complete")) \
-                and gate.get("stable") is False and gate.get("phase") in ENVIRONMENT_ALBUM_SETTLING_PHASES)
-    elapsed, deadline = failure["wait_elapsed_seconds"], failure["deadline_seconds"]
-    exhausted = elapsed is not None and deadline is not None and deadline > 0 and elapsed >= deadline
-    # Idle durations alone do not prove a timeout; explicit native tool messages use their own branch.
-    return eligible and exhausted
-
-
-def validate_environment_limit_v5(proof):
-    from ci_summary import fields, require
-    from ci_bounded_diagnostics import validate_case_resources
-    messages = proof[FAILURE_MESSAGES_FIELD]
-    validate_failure_messages(messages)
-    diagnostics = failure_messages_diagnostics(messages)
-    require(all(proof[key] == diagnostics[key] for key in DIAGNOSTIC_FIELDS),
-            "environment limit: failure messages differ from diagnostic class")
-    if proof["kind"] == "xctest-tool":
-        require(all(xctest_tool_class(message) is not None for message in messages)
-                and proof["failure_class"] in {"process_lifetime", "snapshot_query"}
-                and proof["failure"] is None and proof["resources"] is None,
-                "environment limit: not an exclusive XCTest tool failure")
-        return
-    require(proof["kind"] == "timing-wait", "environment limit: unsupported failure kind")
-    failure = proof["failure"]
-    names = {"source", "step", "element", "action", "app", "surface", "control_bar", "scene_status",
-             "wait_elapsed_seconds", "deadline_seconds", "action_duration_seconds", "post_event_idle",
-             "pre_event_idle", "ax_root_acquisition"}
-    if isinstance(failure, dict) and "gate" in failure:
-        names.add("gate")
-    if isinstance(failure, dict) and "autoplay" in failure:
-        names.add("autoplay")
-    fields(failure, names, "environment failure")
-    receipt = unavailable_first_failure("xctest")
-    for key in ("source", "step", "element", "action"):
-        receipt[key] = failure[key]
-    for key in ("app", "surface", "control_bar", "scene_status"):
-        receipt["state"][key] = failure[key]
-    if "autoplay" in failure:
-        receipt["state"]["autoplay"] = failure["autoplay"]
-    for key in ("wait_elapsed_seconds", "deadline_seconds", "action_duration_seconds"):
-        receipt["timing"][key] = failure[key]
-    receipt["native_activity_seconds"] = {key: failure.get(key) for key in NATIVE_ACTIVITY_FIELDS}
-    if "gate" in failure:
-        receipt["gate"] = failure["gate"]
-    validate_first_failure(receipt)
-    require(environment_timing_v5(failure, proof["failure_class"], messages),
-            "environment limit: failure is not an eligible timing wait")
-    resource = proof["resources"]
-    validate_case_resources([resource])
-    samples = resource["failure_samples"]
-    require(len(samples) >= 2 and all(sample["idle_percent"] is not None
-            and sample["idle_percent"] <= ENVIRONMENT_IDLE_MAX_PERCENT for sample in samples)
-            and any(sample["elapsed_seconds"] < resource["first_failure_elapsed_seconds"] for sample in samples)
-            and any(sample["elapsed_seconds"] > resource["first_failure_elapsed_seconds"] for sample in samples),
-            "environment limit: insufficient starvation evidence")
-
-
-def environment_limit_evidence_v5(summary, entry, resources, *, runner_hosted):
-    from ci_summary import require
-    require(entry["duration_seconds"] is not None, "environment limit: unknown test duration")
-    require(runner_hosted is True and summary["source"]["workflow_path"] == ".github/workflows/ci-nightly.yml"
-            and summary["source"]["event"] in {"schedule", "workflow_dispatch"}
-            and (summary["run"]["tier"], summary["run"]["job"]) in {
-                ("strict", "nightly-strict"), ("ui", "ui-iphone"), ("ui", "ui-ipad"), ("ui", "ui-appletv")},
-            "environment limit: outside hosted nightly scope")
-    require(entry["outcome"] == "failed" and entry["identity"]["kind"] == summary["run"]["tier"]
-            and VALIDATOR_FAILURE_FIELD not in entry, "environment limit: not a timing or tool failure")
-    messages = entry[FAILURE_MESSAGES_FIELD]
-    validate_failure_messages(messages)
-    tool = all(xctest_tool_class(message) is not None for message in messages)
-    receipt = public_first_failure(entry.get(FIRST_FAILURE_FIELD))
-    require(receipt is None or receipt["source"] == "xctest", "environment limit: not an XCTest first failure")
-    require(tool or summary["run"]["tier"] == "strict" and receipt is not None,
-            "environment limit: missing strict first failure")
-    candidates = [resource for resource in resources if resource.get("first_failure_elapsed_seconds") is not None]
-    require(tool or len(candidates) == 1, "environment limit: ambiguous failure resources")
-    proof = {"schema_version": 1, "policy_version": 5, "runner_hosted": True,
-        "kind": "xctest-tool" if tool else "timing-wait", FAILURE_MESSAGES_FIELD: deepcopy(messages),
-        "failure_phase": entry.get("failure_phase"), "failure_class": entry.get("failure_class"),
-        "failure": None if tool else environment_failure_projection(receipt, policy_version=5),
-        "resources": None if tool else candidates[0]}
-    # This exact preparation timeout needs the existing toggle readback; old proofs stay unchanged.
-    if messages == ["Late image preparation must turn Autoplay off."]:
-        proof["failure"]["autoplay"] = receipt["state"]["autoplay"]
-    validate_environment_limit(proof)
-    return proof
-
-
-def bind_ui_environment_limits(summary, official):
-    """Recheck each yellow method against its complete original official failure list."""
-    from ci_summary import require
-    from ci_flaky import official_ui_duration
-    nodes = {}
-    def visit(node):
-        require(isinstance(node, dict), "environment limit: invalid official UI node")
-        if node.get("nodeType") == "Test Case":
-            key = str(node.get("nodeIdentifier", "")).removesuffix("()")
-            if key.count("/") == 2:
-                key = key.removeprefix("immichSlidesUITests/")
-            require(key not in nodes, "environment limit: duplicate official UI method")
-            nodes[key] = node
-        for child in node.get("children", []):
-            visit(child)
-    require(isinstance(official, dict) and isinstance(official.get("testNodes"), list),
-            "environment limit: missing official UI evidence")
-    for node in official["testNodes"]:
-        visit(node)
-    for entry in summary["population"]["observed"]:
-        if ENVIRONMENT_LIMIT_FIELD not in entry:
-            continue
-        node = nodes.get(entry["identity"]["key"], {})
-        require(official_ui_duration(node) is not None, "environment limit: unknown official UI duration")
-        require(node.get("result") == "Failed" and node.get(FAILURE_MESSAGES_FIELD) == entry[FAILURE_MESSAGES_FIELD]
-                and all(node.get(key) == entry.get(key) for key in DIAGNOSTIC_FIELDS),
-                "environment limit: official UI failure messages differ")
-        require(official_failure_count(node) == len(entry[FAILURE_MESSAGES_FIELD]),
-                "environment limit: official UI failure count differs")
 
 
 def official_failure_count(node):
@@ -615,62 +207,6 @@ def preparation_first_failure(ledger):
             receipt["timing"]["wait_elapsed_seconds"] = event["elapsed_seconds"]
     validate_first_failure(receipt)
     return receipt
-
-
-def remember_validator_input(image_bytes):
-    if _validator_enabled.get():
-        _validator_input.set(image_bytes if len(image_bytes) <= 32 * 1024 * 1024 else None)
-
-
-def remember_validator_capture(path, image_bytes=None):
-    """Project only existing bounded fields from the actual PNG's cached capture window."""
-    if not _validator_enabled.get():
-        return
-    _validator_capture.set(None)
-    _validator_input.set(None)
-    if image_bytes is None:
-        return
-    try:
-        import hashlib
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 65536:
-            return
-        capture = json.loads(path.read_text())
-        if capture["png_sha256"] != hashlib.sha256(image_bytes).hexdigest():
-            return
-        before, after = capture["before"], capture["after"]
-        started, deadline, requested, returned = (capture[key] for key in
-            ("window_started_unix", "deadline_unix", "capture_requested_unix", "capture_returned_unix"))
-        observed_before, observed_after = (float(piece["observed_unix"]) for piece in (before, after))
-        times = (started, deadline, requested, returned, observed_before, observed_after)
-        if any(type(value) not in (int, float) or not math.isfinite(value) for value in times):
-            return
-        if not (0 <= started <= observed_before <= requested <= returned <= observed_after
-                and started < deadline and observed_after - started <= FIRST_FAILURE_MAX_SECONDS
-                and deadline - started <= FIRST_FAILURE_MAX_SECONDS):
-            return
-        def fields(piece):
-            return dict(item.split("=", 1) for item in piece["render"].split(";") if "=" in item)
-        first, last = fields(before), fields(after)
-        receipt = unavailable_first_failure("validator", "capture-frame", "app-window")
-        state = receipt["state"]
-        state["observation"] = "cached"
-        if all(piece.get("playPauseValue") in ("play", "pause") for piece in (before, after)):
-            state["control_bar"] = "visible"
-            state["surface"] = "playback"
-        if first.get("playbackPaused") == last.get("playbackPaused") in ("true", "false"):
-            state["autoplay"] = "off" if last["playbackPaused"] == "true" else "on"
-        if first.get("historyCount") == last.get("historyCount"):
-            count = last.get("historyCount", "")
-            if re.fullmatch(r"0|[1-9][0-9]{0,9}", count) and int(count) <= 2**31 - 1:
-                state["history_count"] = int(count)
-        receipt["timing"].update({"wait_elapsed_seconds": returned - started,
-            "deadline_seconds": deadline - started, "capture_request_seconds": requested - started,
-            "capture_return_seconds": returned - started})
-        validate_first_failure(receipt)
-        _validator_capture.set((receipt, capture["png_sha256"]))
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError):
-        # Optional, malformed or unbound capture metadata cannot alter a visual verdict.
-        pass
 
 
 def canonical_first_failure_png(data):
@@ -706,83 +242,6 @@ def collect_first_failure_image(operation):
     return recorder.collect("xcode", operation, cap=max(0, 5 - recorder.charged["xcode"]))
 
 
-def normalize_ui_failure_images(directory):
-    """Only exported public-fixture failure attachments are normalized, after XCTest has finished."""
-    for path in directory.rglob("*"):
-        if path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
-            continue
-        try:
-            if path.is_symlink() or not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
-                path.unlink(missing_ok=True)
-                continue
-            image = canonical_first_failure_png(path.read_bytes())
-            if image is None:
-                path.unlink(missing_ok=True)
-                continue
-            destination = path if path.suffix.lower() == ".png" else path.with_name(path.name + ".png")
-            destination.write_bytes(image[0])
-            if destination != path:
-                path.unlink()
-        except Exception:
-            # Unreadable optional media must not reach the existing upload boundary.
-            path.unlink(missing_ok=True)
-
-
-@contextmanager
-def public_fixture_validator_scope(directory, *, screenshots=False):
-    """Only the controlled fixture runner enters this scope; keep an actual validator input on failure."""
-    enabled, image_token = _validator_enabled.set(True), _validator_input.set(None)
-    capture_token = _validator_capture.set(None)
-    try:
-        yield
-    except Exception as error:
-        receipt = unavailable_first_failure("validator", "capture-frame", "app-window")
-        receipt["validator"] = {"kind": "unknown", "slot": None, "axis": "unknown"}
-        message = public_validator_failure_message(str(error.__cause__ or error))
-        slots = re.findall(r"\bslot ([1-9][0-9]?) \((horizontal|vertical|both)(?: axes)?\)", message)
-        if slots and int(slots[0][0]) <= 64:
-            slot, axis = slots[0]
-            if {item for item, _ in slots} == {slot} and {axis for _, axis in slots} == {"horizontal", "vertical"}:
-                axis = "both"
-            receipt["validator"] = {"kind": "glyph", "slot": int(slot), "axis": axis}
-        data = _validator_input.get()
-        cached = _validator_capture.get()
-        try:
-            import hashlib
-            from strict_e2e_photo_identity import classify_screenshot
-            if (cached is not None and data and message not in {"unresolved", VALIDATOR_FAILURE_REDACTED}
-                    and hashlib.sha256(data).hexdigest() == cached[1]):
-                receipt["state"] = cached[0]["state"]
-                receipt["timing"] = cached[0]["timing"]
-                receipt["state"]["scene_status"] = classify_screenshot(data).status
-        except Exception:
-            # Cached optional diagnostics must preserve the validator's original rejection.
-            receipt = {**receipt, "state": unavailable_first_failure("validator")["state"],
-                       "timing": dict.fromkeys(FIRST_FAILURE_TIMING_FIELDS)}
-        try:
-            if screenshots and data:
-                image = collect_first_failure_image(lambda: canonical_first_failure_png(data))
-                if image is not None:
-                    png, width, height = image
-                    receipt["screenshot"] = {"status": "validated-input", "width": width, "height": height, "bytes": len(png)}
-                    path = directory / "first-failure-validator.png"
-                    path.write_bytes(png)
-                    validate_first_failure_image(path, receipt)
-        except Exception:
-            # An optional diagnostic must preserve the exception already raised by the validator.
-            receipt["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
-        try:
-            validate_first_failure(receipt)
-            (directory / "first-failure-validator.json").write_text(json.dumps(receipt, sort_keys=True) + "\n")
-        except (OSError, ValueError, TypeError):
-            pass
-        raise
-    finally:
-        _validator_enabled.reset(enabled)
-        _validator_input.reset(image_token)
-        _validator_capture.reset(capture_token)
-
-
 def first_failure_test_key(identifier):
     key = str(identifier).removesuffix("()")
     parts = key.split("/")
@@ -796,53 +255,6 @@ def first_failure_environment(directory, selectors, *, screenshots=True):
             "STRICT_E2E_FIRST_FAILURE_SCREENSHOT": "1" if screenshots else "0",
             "STRICT_E2E_FIRST_FAILURE_TESTS": json.dumps({key: index for index, key in enumerate(selectors)}),
             "STRICT_E2E_FIRST_FAILURE_ELEMENTS": json.dumps(FIRST_FAILURE_ELEMENTS)}
-
-
-def configure_first_failure_attempt(command, directory, selectors, *, screenshots=True):
-    """Give each existing listed attempt a private spool, without changing retry selection or flags."""
-    import plistlib
-    from pathlib import Path
-    position = command.index("-xctestrun") + 1
-    source = Path(command[position])
-    payload = plistlib.loads(source.read_bytes())
-    for configuration in payload.get("TestConfigurations", []):
-        for target in configuration.get("TestTargets", []):
-            if target.get("BlueprintName") == "immichSlidesUITests":
-                target.setdefault("EnvironmentVariables", {}).update(
-                    first_failure_environment(directory, selectors, screenshots=screenshots))
-    prepared = source.with_name(source.stem + "-first-failure-" + directory.name + source.suffix)
-    try:
-        prepared.write_bytes(plistlib.dumps(payload))
-    except OSError:
-        prepared.unlink(missing_ok=True)
-        raise
-    command = list(command)
-    command[position] = str(prepared)
-    return command, prepared
-
-
-def attach_first_failures(observed, official, number):
-    """Keep the first failing attempt's receipt across the runner's existing listed retry."""
-    def visit(node):
-        if not isinstance(node, dict):
-            return
-        receipt = public_first_failure(node.get(FIRST_FAILURE_FIELD))
-        if node.get("nodeType") == "Test Case" and node.get("result") == "Failed" and receipt is not None:
-            key = first_failure_test_key(node.get("nodeIdentifier", ""))
-            for entry in observed:
-                if first_failure_test_key(entry["identity"]["key"]) != key:
-                    continue
-                first = next((attempt for attempt in entry["attempts"] if attempt["outcome"] != "passed"), None)
-                for attempt in entry["attempts"]:
-                    if attempt["number"] == number and attempt["outcome"] in {"failed", "crashed", "timed-out"}:
-                        if attempt is first or first is not None and FIRST_FAILURE_FIELD in first:
-                            attempt[FIRST_FAILURE_FIELD] = receipt
-                if first is not None and FIRST_FAILURE_FIELD in first:
-                    entry[FIRST_FAILURE_FIELD] = first[FIRST_FAILURE_FIELD]
-        for child in node.get("children", []) if isinstance(node.get("children", []), list) else []:
-            visit(child)
-    for node in official.get("testNodes", []):
-        visit(node)
 
 
 def collect_first_failure_spool(directory, selectors, failed_nodes, output):
@@ -924,106 +336,6 @@ def validate_first_failure_image(path, receipt):
         raise ValueError("first failure package image cannot be decoded") from None
 
 
-def validate_ui_first_failure_images(directory, summary):
-    from ci_summary import require
-    declared = summary["population"]["declared"]
-    observed = {entry["identity"]["key"]: entry for entry in summary["population"]["observed"]}
-    expected = set()
-    for index, identity in enumerate(declared):
-        entry = observed.get(identity["key"], {})
-        attempts = entry.get("attempts", []) + ([entry["retry_failure"]] if "retry_failure" in entry else [])
-        for attempt in attempts:
-            receipt = attempt.get(FIRST_FAILURE_FIELD)
-            if receipt is None or receipt["screenshot"]["status"] != "captured":
-                continue
-            folder = directory / ("first-failure-attempt-" + str(attempt["number"]))
-            require(folder.is_dir() and not folder.is_symlink(), "invalid first failure package directory")
-            path = folder / f"{index}.png"
-            validate_first_failure_image(path, receipt)
-            expected.add(path)
-    folders = list(directory.glob("first-failure-attempt-*"))
-    require(all(folder.is_dir() and not folder.is_symlink() and folder in {path.parent for path in expected}
-                for folder in folders), "invalid first failure package directory")
-    actual = {path for folder in folders for path in folder.iterdir()}
-    require(actual == expected, "unexpected first failure package content")
-    for path in directory.rglob("*"):
-        if path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
-            require(path.is_file() and not path.is_symlink(), "nonregular first failure package input")
-            require(0 < path.stat().st_size <= FIRST_FAILURE_MAX_IMAGE_BYTES, "first failure package image exceeds bound")
-            from PIL import Image
-            try:
-                with Image.open(path) as image:
-                    receipt = {"screenshot": {"width": image.width, "height": image.height, "bytes": path.stat().st_size}}
-            except (OSError, Image.DecompressionBombError):
-                raise ValueError("first failure package image cannot be decoded") from None
-            validate_first_failure_image(path, receipt)
-
-
-def attach_native_tap_failure(nodes, messages):
-    """Strict-only projection from the already-read legacy failures; never a verdict input."""
-    method = "StrictE2EFilterIOSUITests/testFilterAlbumTargetMembers"
-    for node in nodes:
-        key = first_failure_test_key(node.get("nodeIdentifier", ""))
-        receipt = node.get(FIRST_FAILURE_FIELD)
-        raw = messages.get(key, [])
-        if (key != method or not isinstance(receipt, dict) or len(raw) != 1
-                or receipt.get("source") != "xctest" or receipt.get("step") != "select"
-                or receipt.get("element") != "slideshow.control.next.button" or receipt.get("action") != "tap"):
-            continue
-        text = raw[0]
-        tool = xctest_tool_class(text)
-        category = ("event-synthesis" if isinstance(text, str) and text.startswith("Failed to synthesize event:") else
-            "snapshot-timeout" if tool == "snapshot_query" else
-            "application-process" if tool == "process_lifetime" else None)
-        if category is not None:
-            receipt["native_tap_failure"] = category
-
-
-def validate_album_capture_diagnostic(value):
-    from ci_summary import require
-    def check(condition, reason):
-        require(condition, "album capture diagnostic: " + reason)
-    def numeric(number, *, minimum=0, maximum=FIRST_FAILURE_MAX_SECONDS):
-        return type(number) in (int, float) and math.isfinite(number) and minimum <= number <= maximum
-    check(isinstance(value, dict) and set(value) == {"schema_version", "site", "probe", "fixture", "rejections",
-        "poll_count", "polls", "polls_truncated", "window_seconds", "settle_seconds", "baseline", "pause",
-        "members", "unmapped_member_count"}, "invalid fields")
-    check(type(value["schema_version"]) is int and value["schema_version"] == 1, "invalid version")
-    check(value["site"] in ("album-play-1", "album-play-2", "album-play-3"), "invalid site")
-    check(value["probe"] in ("frameSynchronized", "contract"), "invalid probe")
-    check(value["fixture"] in ("a", "b"), "invalid fixture")
-    reasons = value["rejections"]
-    check(isinstance(reasons, list) and all(isinstance(item, str) and item in ALBUM_CAPTURE_REJECTIONS for item in reasons)
-        and len(reasons) == len(set(reasons)), "invalid rejections")
-    count, polls = value["poll_count"], value["polls"]
-    check(type(count) is int and 0 <= count <= 2**31 - 1, "invalid poll count")
-    check(isinstance(polls, list) and len(polls) <= ALBUM_CAPTURE_MAX_POLLS, "invalid polls")
-    previous = 0
-    for poll in polls:
-        check(isinstance(poll, list) and len(poll) == 2 and all(numeric(n) for n in poll)
-            and previous <= poll[0] <= poll[1], "invalid poll times")
-        previous = poll[1]
-    check(type(value["polls_truncated"]) is bool and value["polls_truncated"] == (count > ALBUM_CAPTURE_MAX_POLLS)
-        and len(polls) == min(count, ALBUM_CAPTURE_MAX_POLLS), "invalid poll retention")
-    check(numeric(value["window_seconds"], minimum=0) and value["window_seconds"] > 0, "invalid window")
-    check(numeric(value["settle_seconds"]) and value["settle_seconds"] < value["window_seconds"], "invalid settle")
-    baseline = value["baseline"]
-    check(isinstance(baseline, dict) and set(baseline) == {"history", "layers"}
-        and all(item in ("no-baseline", "valid", "unreadable") for item in baseline.values()), "invalid baseline")
-    pause = value["pause"]
-    check(isinstance(pause, dict) and set(pause) == {"requested_seconds", "returned_seconds", "observed_seconds"}
-        and all(n is None or numeric(n, minimum=-FIRST_FAILURE_MAX_SECONDS) for n in pause.values()), "invalid pause")
-    requested, returned, observed = (pause[key] for key in ("requested_seconds", "returned_seconds", "observed_seconds"))
-    check((returned is None or requested is not None and requested <= returned)
-        and (observed is None or returned is None or returned <= observed), "invalid pause ordering")
-    members = value["members"]
-    allowed = {"A" + str(n) for n in range(1, 6 if value["fixture"] == "a" else 9)}
-    check(isinstance(members, list) and len(members) <= 64
-        and all(isinstance(item, str) and item in allowed for item in members), "invalid members")
-    check(type(value["unmapped_member_count"]) is int and 0 <= value["unmapped_member_count"] <= 64,
-        "invalid member count")
-
-
 def validate_first_failure(receipt):
     """Validate a fixed public projection, never a raw assertion, AX tree or probe."""
     from ci_summary import require
@@ -1035,33 +347,15 @@ def validate_first_failure(receipt):
         require(value is None or (type(value) in ((int,) if integral else (int, float))
                 and minimum <= value <= maximum and math.isfinite(value)), where + ": invalid number")
     fields = {"schema_version", "source", "step", "element", "action", "timing", "state", "validator", "screenshot"}
-    for optional in ("native_activity_seconds", "gate", "album_capture", "native_tap_failure"):
+    for optional in ():
         if isinstance(receipt, dict) and optional in receipt:
             fields.add(optional)
     exact(receipt, fields, "first failure")
     require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1, "first failure: unsupported version")
-    choice(receipt["source"], ("xctest", "validator", "preparation"), "source")
+    choice(receipt["source"], ("xctest", "preparation"), "source")
     choice(receipt["step"], FIRST_FAILURE_STEPS, "step")
     choice(receipt["element"], FIRST_FAILURE_ELEMENTS, "element")
     choice(receipt["action"], FIRST_FAILURE_ACTIONS, "action")
-    if "album_capture" in receipt:
-        require("gate" in receipt, "album capture diagnostic: requires capture gate")
-        validate_album_capture_diagnostic(receipt["album_capture"])
-    if "native_tap_failure" in receipt:
-        choice(receipt["native_tap_failure"], NATIVE_TAP_FAILURE_CLASSES, "native tap failure")
-        require(receipt["source"] == "xctest" and receipt["step"] == "select"
-            and receipt["element"] == "slideshow.control.next.button" and receipt["action"] == "tap",
-            "first failure: native tap requires Next tap context")
-    if "gate" in receipt:
-        gate = receipt["gate"]
-        exact(gate, {"kind", "phase", *ALBUM_CAPTURE_GATE_BOOLEANS}, "first failure gate")
-        choice(gate["kind"], ("album-capture",), "gate kind")
-        choice(gate["phase"], ALBUM_CAPTURE_GATE_PHASES, "gate phase")
-        for key in ALBUM_CAPTURE_GATE_BOOLEANS:
-            require(gate[key] is None or type(gate[key]) is bool, "first failure gate: invalid boolean")
-        require(receipt["source"] == "xctest" and receipt["step"] == "wait-scene"
-                and receipt["element"] in ("slideshow.scenePresentation.contract.summary", "slideshow.control.next.button"),
-                "first failure: gate requires album capture timeout context")
     timing = receipt["timing"]
     exact(timing, FIRST_FAILURE_TIMING_FIELDS, "first failure timing")
     for value in timing.values():
@@ -1086,12 +380,7 @@ def validate_first_failure(receipt):
     number(state["history_count"], 2**31 - 1, "first failure state", integral=True)
     number(state["query_error_code"], 2**31 - 1, "first failure state", minimum=-(2**31), integral=True)
     validator = receipt["validator"]
-    if validator is not None:
-        exact(validator, {"kind", "slot", "axis"}, "first failure validator")
-        choice(validator["kind"], ("unknown", "public-scene", "glyph", "fixture-pattern", "timing", "missing-evidence"), "validator kind")
-        number(validator["slot"], 64, "first failure validator", minimum=1, integral=True)
-        choice(validator["axis"], ("horizontal", "vertical", "both", "unknown"), "validator axis")
-        require(receipt["source"] == "validator", "first failure: validator context requires validator source")
+    require(validator is None, "first failure: smoke has no visual validator")
     screenshot = receipt["screenshot"]
     exact(screenshot, {"status", "width", "height", "bytes"}, "first failure screenshot")
     choice(screenshot["status"], ("captured", "validated-input", "unavailable", "withheld-privacy", "size-limit", "not-applicable"),
@@ -1116,11 +405,6 @@ def validate_first_failure(receipt):
                 and state["observation"] == "unavailable" and state["history_count"] is None
                 and all(state[key] == "unknown" for key in ("surface", "control_bar", "focus", "autoplay", "orientation", "scene_status")),
                 "first failure: preparation cannot claim app evidence")
-    if "native_activity_seconds" in receipt:
-        require(receipt["source"] == "xctest", "first failure: native activity requires xctest source")
-        exact(receipt["native_activity_seconds"], NATIVE_ACTIVITY_FIELDS, "first failure native activity")
-        for value in receipt["native_activity_seconds"].values():
-            number(value, FIRST_FAILURE_MAX_SECONDS, "first failure native activity")
     require(len(json.dumps(receipt, ensure_ascii=True, allow_nan=False).encode()) <= FIRST_FAILURE_MAX_BYTES,
             "first failure: receipt exceeds size bound")
 
@@ -1134,36 +418,6 @@ def render_first_failure(receipt):
     rendered = (f"{receipt['source']}/{receipt['step']}; {receipt['element']}; "
             f"since action={measured('since_action_issued_seconds')}; wait={measured('wait_elapsed_seconds')}; "
             f"deadline={measured('deadline_seconds')}; screenshot={receipt['screenshot']['status']}")
-    if receipt["source"] == "validator":
-        validator = receipt["validator"] or {}
-        state = receipt["state"]
-        rendered += (f"; slot={validator.get('slot') or 'unavailable'}; axis={validator.get('axis', 'unknown')}"
-            f"; capture={state['observation']}; scene={state['scene_status']}; autoplay={state['autoplay']}"
-            f"; history={state['history_count'] if state['history_count'] is not None else 'unavailable'}"
-            f"; capture request={measured('capture_request_seconds')}; return={measured('capture_return_seconds')}")
-    if "gate" in receipt:
-        gate = receipt["gate"]
-        rendered += "; gate=" + gate["kind"] + ": " + ", ".join(
-            key + "=" + json.dumps(gate[key]) for key in ALBUM_CAPTURE_GATE_BOOLEANS)
-        rendered += ", phase=" + gate["phase"]
-    if "album_capture" in receipt:
-        diagnostic = receipt["album_capture"]
-        rendered += (f"; album={diagnostic['site']}/{diagnostic['probe']}; "
-            f"rejected={','.join(diagnostic['rejections']) or 'none'}; polls={diagnostic['poll_count']}; "
-            f"baseline={diagnostic['baseline']['history']}/{diagnostic['baseline']['layers']}")
-    if "native_tap_failure" in receipt:
-        rendered += "; native-tap=" + receipt["native_tap_failure"]
-    if "native_activity_seconds" in receipt:
-        native = receipt["native_activity_seconds"]
-        if all(value is None for value in native.values()):
-            rendered += "; native=unavailable"
-        else:
-            labels = (("pre", "pre_event_idle"), ("window", "find_window"),
-                      ("synth", "synthesize_event"), ("post", "post_event_idle"),
-                      ("ax", "ax_root_acquisition"))
-            rendered += "; native: " + ", ".join(
-                label + "=" + ("unavailable" if native[key] is None else f"{native[key]:g}s")
-                for label, key in labels)
     return rendered
 
 
@@ -1171,669 +425,85 @@ def public_first_failure(receipt):
     try:
         validate_first_failure(receipt)
     except (ValueError, TypeError, OverflowError):
-        if not isinstance(receipt, dict) or "album_capture" not in receipt:
-            return None
-        # An optional projection cannot erase independently valid pre-existing gate evidence.
-        core = {key: value for key, value in receipt.items() if key != "album_capture"}
-        try:
-            validate_first_failure(core)
-        except (ValueError, TypeError, OverflowError):
-            return None
-        return core
+        return None
     return receipt
 
-# Fixed raise arguments and _require_named_png messages from the reviewed public contracts.
-# Source synchronization guards keep these literal and closed-set copies current
-# without importing image/fixture dependencies into the isolated trusted reader.
-VALIDATOR_FIXED_PREFIXES = (
-    # album_server_narrow_contract.py
-    "Selectors must be Target/Class/method",
-    "The same official method was counted more than once",
-    "Zero executions or skips cannot be reported as success",
-    "empty-album.json start_enabled may be not applicable only for the Settings filter editor entry",
-    "empty-album.json start_enabled must be a recorded Boolean or the Settings editor not-applicable marker",
-    "Album-empty member-manifest does not match the requested fixture",
-    "Empty-selection start button id does not match the frozen contract",
-    "Request logs, index or probes cannot serve as identity truth",
-    "The target album needs screenshots of at least two different public identities",
-    "The two playback screenshots must be different public identities; an asset ID is not visual proof",
-    "The empty album must be the controlled empty fixture; the selection cannot be faked",
-    "The empty-album branch cannot use a probe or enum in place of the screen",
-    "The empty-result copy must come from the frozen existing production resource",
-    "Missing empty-album result screenshot",
-    "After the empty album, photos from the old non-empty pool must not keep playing",
-    "Missing screenshot of A's selected scope and photo",
-    "After switching servers there must be a screenshot of B's public pattern",
-    "After switching servers the screen is still the same as A",
-    "Missing B save-success screen",
-    "Missing screen showing the old selection cleared",
-    "ids in observed-ids.json must be a list of strings",
-    "Empty observations cannot pass",
-    "Observations assembled from the expected manifest cannot pass",
-    "A server switch requires a non-empty continuous recording",
-    "The server-switch recording was not finalized",
-    "Unrecognizable input: empty-album result screenshot cannot be decoded",
-    "A server switch requires the B server URL",
-    "A server switch must use the suite runner with screen recording",
-    # strict_e2e_photo_identity.py
-    "Scene probe fields must be text",
-    "Visual suites need Pillow. Run python3 -m pip install Pillow first, then run journey-b / pause-window / tvos-flow / tvos-album / tvos-person / tvos-switch.",
-    "Unrecognizable input: unreadable public glyph slot: screenshot cannot be decoded",
-    "unreadable public glyph slot: single photo color or public texture is missing; slot 1 (both axes)",
-    "unreadable public glyph slot: conflicting public background patterns",
-    "no public glyph",
-    "system overlay box is outside the public frame",
-    "unreadable public glyph slot",
-    "Still the original photo after the first forward step",
-    "Still the same photo after the second forward step",
-    "The first back step must return to the first forward photo",
-    "Photo changed after pausing over 10 seconds",
-    "Still the same photo after resuming playback; it did not advance",
-    "Scene round-trip pixels and index sequence disagree: pause publication changed",
-    "Pause window bright proof must show A2",
-    "Pause window capture contract is missing or invalid",
-    "Pause window bright proof must be one frozen opaque scene",
-    "The paused pause-window probe identity must not change",
-    "Pause window midpoint must contain visible photo pixels",
-    "Target window shows the wrong image; cannot count as SUCCESS",
-    "Pause window pixel comparison is not usable",
-    "Paused pause-window frames must be pixel-identical",
-    # strict_e2e_filter_contract.py
-    "Empty playback membership cannot count as passing",
-    "Repeated members cannot count as passing",
-    "missing visual input person-conflict-normal.png",
-    "single-photo surround still shows a sharp public photo mark; a second photo cannot count as background",
-    "single-photo surround still has sharp public photo color-block edges; it cannot count as a blurred background",
-    "single-photo surround still has unexplained sharp texture; it cannot be cropped away as blurred background",
-    "single-photo surround does not match this photo's blurred background; multi-photo or unknown-frame risk remains",
-    "display-policy screenshot is too small to check photo regions",
-    "standalone display-policy suite must use fixture A only",
-    "display-policy screenshot identity must come from public fixture photo marks",
-    "Display strategy must be set through the real UI",
-    "display policy must change from SmartFill to single-photo mode",
-    "Missing multi-photo before, real settings action, or stable single-photo after screenshot",
-    "missing the finite list of before-change candidate screenshots",
-    "Before-change screenshot candidates exceed one complete finite rotation of the target album",
-    "before-change candidate screenshots must be numbered consecutively in real order",
-    "must use the first candidate screenshot in the finite rotation that meets the before-change multi-photo condition",
-    "found extra candidate screenshots after the first one that met the condition",
-    "display-before.png must keep the raw screenshot of the first valid candidate",
-    "The before-change frame must be recognizable as a public fixture photo",
-    "Multiple before-change photos cannot be faked by a transition",
-    "The before-change frame must actually show at least two different photos",
-    "The before-change frame must contain only fixture A; do not mix fixtures A and B or unknown content",
-    "after-change cannot use a transition or unknown frame as passing: the stable photo region is still transitioning",
-    "The after-change frame must be a recognizable, stable single-photo frame",
-    "after-change frame must be a recognizable single-photo frame",
-    "Request logs, indexes, and probes cannot be used as identity truth",
-    "empty-selection.json start_enabled must be a Boolean",
-    "member manifest fixture does not match runner fixture",
-    "member manifest is not the frozen contract",
-    "wins is not a product filter outcome",
-    "Simulator Vision cannot substitute for a device; soloOnly must not be marked PASS",
-    "An empty selection cannot start playback",
-    "empty selection after server switch must come from the actual filter editor",
-    "Unrecognizable input: target album screenshot cannot be decoded",
-    "album replacement identity must come from real UI accessibility identifiers",
-    "after replacement, UI identifiers must confirm the non-target album is selected",
-    "after switching to the non-target album, the default mode must still be filtered playback",
-    "after clearing filters and leaving the editor, the default mode must return to random playback",
-    "start button id does not match the frozen contract",
-    "empty-selection.json fields are incomplete",
-    "empty-selection.json album_ids must contain only strings",
-    "wins is not a product filter outcome and cannot be asserted as a filter result",
-    "person-results.json is missing cases",
-    "person-results.json is missing solo_only",
-    "simulator Vision must fail or be UNVERIFIED",
-    "observed-ids.json ids must be a list of strings",
-    "single-photo identity after server switch must come from public fixture photo marks",
-    "Single-photo mode must be applied through the real UI after switching servers",
-    "single-photo frame after server switch still shows multiple photos",
-    "vision-environment.json is missing vision_available",
-    "device Vision is missing qualified_marks / face_counts",
-    "device Vision face_counts must contain only integers",
-    "request log has no checkable lines",
-)
-VALIDATOR_MANIFEST_PREFIXES = (
-    "a person filter must be a separate person_id + mode",
-    "member manifest fixture set is unknown",
-    "member-manifest labels do not match classify_screenshot: must cover every public fixture photo",
-    "member-manifest labels do not match classify_screenshot: every photo must MATCH a distinct classified label",
-    "member-manifest labels do not match classify_screenshot: missing person_cases",
-    "member-manifest independent object sets do not match fixture derivation",
-    "fixture hash has drifted from the frozen contract",
-    "member manifest is not the frozen contract",
-    "member manifest fixture hash does not match the frozen contract",
-    "Request logs, indexes, and probes cannot be used as identity truth",
-    "Empty playback membership cannot count as passing",
-    "An empty selection cannot start",
-    "start button state does not match the selection contract",
-    "Simulator Vision cannot substitute for a device; soloOnly must not be marked PASS",
-    "Vision unavailable; soloOnly must not pass by accident",
-    "An empty soloOnly result cannot pass by coincidence from an empty set",
-)
-# Retention readers still accept these retired messages; no nightly validator raises them.
-VALIDATOR_HISTORICAL_PREFIXES = (
-    "member-manifest labels do not match classify_screenshot: must cover all five photos",
-    "member-manifest labels do not match classify_screenshot: all five must MATCH and tell A1–A5 apart",
-    "An A screen must not pass as B",
-    "Display policy cannot pass on enum/probe alone",
-    "The fixture yields no multi-photo screen; fix the fixture/preconditions first",
-    "A still frame mid-transition cannot pass",
-    "After the change the screen must be a stable single-photo public identity",
-    "Still multi-photo after the change; cannot pass as single-photo",
-    "Display policy did not take effect",
-    "server-switch-a-play-1: every slot must show the public pattern a",
-)
-VALIDATOR_FIXTURE_PATTERNS = ("a", "b", None)
-VALIDATOR_IDENTITY_STATUSES = ("UNRECOGNIZABLE", "BLACK", "BLANK", "TRANSITION", "MATCH")
-VALIDATOR_IDENTITY_MARKS = ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", None)
-
-# No arbitrary filename, exception suffix or pixel values.
-# See CI_STRICT_RUNNER.md#public-validator-failure-receipts for the public receipt contract.
-_VALIDATOR_SCREENSHOT_STEM = (
-    r"(?:person-normal(?:-1)?|person-no-faces|person-nofaces-1|vision-solo-1|"
-    r"person-conflict-normal(?:-[1-9][0-9]?)?|"
-    r"album-playback-[123]|album-play-[123]|album-switch-b-play-[12]|server-switch-a-play-1|switch-b-play-[12]|"
-    r"history-(?:start|first-next|second-next|first-previous|second-previous)|"
-    r"pause-immediate|pause-after-10s|resumed|display-after)"
-)
-_VALIDATOR_SCREENSHOT = _VALIDATOR_SCREENSHOT_STEM + r"\.png"
-_VALIDATOR_PREFIX = (
-    r"(?:Unrecognizable input: )?(?:no public glyph|mixed public glyphs|"
-    r"unreadable public glyph slot(?:: (?:single photo color or public texture is missing|"
-    r"public photo colors are missing or mixed|conflicting public background patterns|"
-    r"foreign public background pattern|screenshot cannot be decoded))?|"
-    r"every slot must show the public glyph of fixture [AB]|"
-    r"unreadable public glyph: (?:AttributeError|IndexError|KeyError|OSError|TypeError|"
-    r"UnidentifiedImageError|ValueError))"
-)
-_VALIDATOR_EXPECTED_PATTERN = "(?:" + "|".join(re.escape(value) for value in VALIDATOR_FIXTURE_PATTERNS
-                                             if value is not None) + ")"
-_VALIDATOR_PATTERN = "(?:" + "|".join(re.escape(str(value)) for value in VALIDATOR_FIXTURE_PATTERNS) + ")"
-_VALIDATOR_STATUS = "(?:" + "|".join(map(re.escape, VALIDATOR_IDENTITY_STATUSES)) + ")"
-_VALIDATOR_MARK = "(?:" + "|".join(re.escape(str(value)) for value in VALIDATOR_IDENTITY_MARKS) + ")"
-_VALIDATOR_PREFIX = (
-    "(?:" + _VALIDATOR_PREFIX + "|"
-    + "|".join(map(re.escape, VALIDATOR_FIXED_PREFIXES + VALIDATOR_MANIFEST_PREFIXES
-                   + VALIDATOR_HISTORICAL_PREFIXES))
-    + rf"|{_VALIDATOR_SCREENSHOT_STEM} public pattern must be {_VALIDATOR_EXPECTED_PATTERN}, got {_VALIDATOR_PATTERN}"
-    + rf"|Unrecognizable input cannot count as passing: status={_VALIDATOR_STATUS} mark={_VALIDATOR_MARK})"
-)
-_VALIDATOR_PREFIX_ONLY = re.compile(_VALIDATOR_PREFIX)
-_VALIDATOR_COUNT = r"(?:0|[1-9][0-9]{0,2})"
-_VALIDATOR_AXIS = r"(?:horizontal|vertical|both axes)"
-_VALIDATOR_CONTEXT = (
-    rf"(?:screenshot {_VALIDATOR_SCREENSHOT}|slot {_VALIDATOR_COUNT} \({_VALIDATOR_AXIS}\)|"
-    rf"{_VALIDATOR_COUNT} slots? \({_VALIDATOR_AXIS}\)|"
-    rf"(?:horizontal|vertical) axis, (?:slot count unresolved|{_VALIDATOR_COUNT} completed slots?)|"
-    rf"observed fixture [AB] in all {_VALIDATOR_COUNT} slots? \({_VALIDATOR_AXIS}\)|"
-    r"horizontal and vertical axes disagree|slot count and axes unresolved|context unresolved)"
-)
-_VALIDATOR_MESSAGE = re.compile(rf"{_VALIDATOR_PREFIX}(?:; {_VALIDATOR_CONTEXT}){{1,32}}")
-
-
-def validate_validator_failure_message(value):
-    """Validate public text without echoing refused candidate values."""
-    if not isinstance(value, str) or not value:
-        raise ValueError("validator failure message must be nonempty text")
-    if len(value) > VALIDATOR_FAILURE_MAX_LENGTH:
-        raise ValueError("validator failure message exceeds length bound")
-    if value not in {"unresolved", VALIDATOR_FAILURE_REDACTED} and _VALIDATOR_MESSAGE.fullmatch(value) is None:
-        raise ValueError("validator failure message is not public context")
-
-
-def public_validator_failure_message(value):
-    """Keep a failed record when its optional candidate receipt is unsafe."""
-    if value is None:
-        return "unresolved"
-    if (isinstance(value, str) and _VALIDATOR_PREFIX_ONLY.fullmatch(value) is not None
-            and _VALIDATOR_MESSAGE.fullmatch(value) is None):
-        value += "; context unresolved"
-    try:
-        scan_diagnostic_json(json.dumps({VALIDATOR_FAILURE_FIELD: value}).encode())
-    except (ValueError, TypeError):
-        return VALIDATOR_FAILURE_REDACTED
-    return value
-
-# Reviewed prefixes from AccessLifecycleContract (+Controls/+TransitionTiming),
-# AccessLifecycleIOSUITests (+Settings/+Navigation), PlaybackHistoryIOSUITests
-# (+Support), strict first-batch/filter/late-image/tvOS flows, EXIF ownership,
-# ScenePresentationContractUITests, FilterSummaryIOSVisualUITests+Exif,
-# FilterSummaryIOSVisualUITests+Launch, their public drivers and XCTest.
-# Source locations and enum meanings: docs/CI_STRICT_RUNNER.md#reviewed-prefix-table.
-# No activity marker exists in these flows. Unreviewed suffixes (including values) are discarded.
+# Fixed smoke and shared first-boot messages only; runtime suffixes remain private.
 PREFIX_RULES = (
-    ("Smoke flow: ", "unknown", "control_state"),
-    ("System Reduce Motion command: ", "settings_navigation", "control_state"),
-    ("App Reduce Motion: ", "settings_navigation", "control_state"),
-    ("The app did not return to the foreground after changing system Reduce Motion.", "settings_navigation", "control_state"),
-    ("App timeline:", "continue_timing", "evidence_capture"),
-    ("System settings: Reduce Motion read back after the tap is not ", "settings_navigation", "control_state"),
-    ("System settings: Reduce Motion switch is not ready for system evidence.", "settings_navigation", "control_state"),
-    ("System settings: Settings must be foreground before changing Reduce Motion.", "settings_navigation", "control_state"),
-    ("System settings: Reduce Motion snapshot readback timed out after one tap.", "settings_navigation", "control_state"),
-    ("System settings: Cannot find the Reduce Motion switch", "settings_navigation", "control_state"),
-    # tvOS timing-precondition fixes: keep separate from the broader diagnostics-only expansion.
-    ("tvOS Continue wake timing precondition failed: Up must not be requested before T-2.", "continue_timing", "timing_window"),
-    ("tvOS flow entry precondition failed:", "history_navigation", "control_state"),
-    ("tvOS flow entry anchor must remain paused before checking the history boundary.", "history_navigation", "control_state"),
-    ("tvOS midpoint setup exhausted the original step budget before the half-cycle pause.", "continue_timing", "timing_window"),
-    ("tvOS midpoint pause requires Play/Pause focus after at most one wake within the original step budget.", "control_action", "focus"),
-    ("tvOS midpoint pause must return in the anchored stable window within the original step budget.", "continue_timing", "timing_window"),
-    ("tvOS midpoint pause must preserve the anchored public photo before manual Next.", "control_action", "scene_identity"),
-    ("tvOS midpoint setup requires a new stable public photo within the original step budget.", "continue_timing", "scene_identity"),
-    # Existing reviewed prefixes.
-    ("Visual ID failed history-start:", "history_start_capture", "scene_identity"),
-    ("Visual ID failed history-first-next:", "history_first_next_capture", "scene_identity"),
-    ("Visual ID failed history-second-next:", "history_second_next_capture", "scene_identity"),
-    ("Visual ID failed history-first-previous:", "history_first_previous_capture", "scene_identity"),
-    ("Visual ID failed history-second-previous:", "history_second_previous_capture", "scene_identity"),
-    ("rotation-start-portrait did not stabilize within the ", "rotation_start_capture", "timing_window"),
-    ("rotation-landscape-stable did not stabilize within the ", "rotation_landscape_capture", "timing_window"),
-    ("rotation-portrait-stable did not stabilize within the ", "rotation_portrait_capture", "timing_window"),
-    ("layout-landscape-multi did not stabilize within the ", "visible_scene_capture", "timing_window"),
-    ("layout-portrait-multi did not stabilize within the ", "visible_scene_capture", "timing_window"),
-    ("Could not recognize a public photo on screen within ", "visible_scene_capture", "scene_identity"),
-    ("The public photo on screen did not change after next;", "history_navigation", "scene_identity"),
-    ("Before rotating, the play button value must be pause (playing),", "control_action", "control_state"),
-    ("The rotation sequence took ", "unknown", "timing_window"),
-    ("The rotation isolation interval must match the displayed playback setting.", "interval_setup", "interval_readback"),
-    ("Orientation API: after setting ", "unknown", "navigation"),
-    ("Fresh install must open the normal first-boot page.", "firstboot_setup", "navigation"),
-    ("First-boot input must have keyboard focus before typing.", "unknown", "focus"),
-    ("Failed to synthesize event: Neither element nor any descendant has keyboard focus.", "unknown", "focus"),
-    ("First-boot page must show the API Key field.", "firstboot_setup", "navigation"),
-    ("The API Key must be entered into the secure field.", "firstboot_setup", "control_state"),
-    ("First-boot page must show Test Connection.", "firstboot_setup", "navigation"),
-    ("First-boot page must show the Save Settings button.", "firstboot_setup", "navigation"),
-    ("A successful save must lead to mode selection.", "firstboot_setup", "navigation"),
-    ("The interval must be set to 30 seconds with the real slider.", "interval_setup", "interval_readback"),
-    ("Playback settings must have display mode segments.", "display_policy", "navigation"),
-    ("Display mode must offer the target option.", "display_policy", "navigation"),
-    ("Display mode must switch to the target option.", "display_policy", "control_state"),
-    ("Must be able to return from settings to playback.", "settings_navigation", "navigation"),
-    ("Settings list must have the playback settings entry.", "settings_navigation", "navigation"),
-    ("After opening playback settings, the auto-play toggle or the playback settings title must be visible.", "settings_navigation", "navigation"),
-    ("The mode page must also offer the filter entry.", "mode_selection", "navigation"),
-    ("Playback page after uninstall means a dirty install container;", "firstboot_setup", "navigation"),
-    ("The public test URL must be entered verbatim,", "firstboot_setup", "control_state"),
-    ("API Key must reach the secure field;", "firstboot_setup", "control_state"),
-    ("iPad must rotate to landscape to record split-view evidence.", "unknown", "navigation"),
-    ("The first-boot filter summary must offer a way back to mode selection.", "mode_selection", "navigation"),
-    ("The iOS filter summary should no longer use a bottom back button,", "mode_selection", "navigation"),
-    ("Connection test showed a failure alert:", "firstboot_setup", "navigation"),
-    ("Pause again before history actions so the 5-second timer does not interfere.", "control_action", "control_state"),
-    ("A nil mark must encode into JSON,", "visible_scene_capture", "evidence_capture"),
-    ("Editor album card must show the manifest-selected album and photo counts", "server_switch", "control_state"),
-    ("The iOS slider must be settable to ", "interval_setup", "interval_readback"),
-    ("The control bar is not hidden yet; cannot verify the first wake.", "hidden_controls", "hidden_controls"),
-    ("The first wake should only bring up the control bar.", "hidden_controls", "hidden_controls"),
-    ("Switching photos while waking must not count as a pass", "hidden_controls", "scene_identity"),
-    ("Jumping to another photo on return from background must not count as a pass", "background_return", "scene_identity"),
-    ("Background return is missing the original process identity", "background_return", "process_lifetime"),
-    ("System pause analog must not rebuild the process", "background_return", "process_lifetime"),
-    ("The process exited after Home; activate would Open/rebuild it", "background_return", "process_lifetime"),
-    ("Must return to the playback page after coming back from the background.", "background_return", "navigation"),
-    ("On background return, do not wait a playback cycle before capturing identity", "background_return", "timing_window"),
-    ("The first-half evidence window after Continue crossed its bounds;", "continue_timing", "timing_window"),
-    ("The same public pattern must stay for the first half of T after Continue", "continue_timing", "scene_identity"),
-    ("tvOS pause-continue evidence is invalid;", "continue_timing", "evidence_capture"),
-    ("iPhone pause-continue evidence is invalid;", "continue_timing", "evidence_capture"),
-    ("tvOS new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
-    ("iPhone new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
-    ("iPad pause-continue lacks valid timing or original photo brightness evidence", "continue_timing", "evidence_capture"),
-    ("iPad pause-continue is missing verifiable old-photo and transition samples", "continue_timing", "evidence_capture"),
-    ("iPad pause-continue samples contain invalid timing or brightness", "continue_timing", "evidence_capture"),
-    ("iPad pause-continue samples are out of order or have a gap", "continue_timing", "evidence_capture"),
-    ("iPad pause-continue: no transition start via sustained dimming or new photo", "continue_timing", "scene_identity"),
-    ("A continuous, reliable screenshot of the previous photo must precede the iPad transition start;", "continue_timing", "evidence_capture"),
-    ("iPad transition: conservative screenshot range must lie fully within T±2 s", "continue_timing", "timing_window"),
-    ("iPad must keep identifying a different new photo for at least 1 second", "continue_timing", "scene_identity"),
-    ("iPad new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
-    ("Record until a new photo is identifiable, not until the T+2 identity timeout", "continue_timing", "evidence_capture"),
-    ("All black must not count as a pass", "unknown", "scene_identity"),
-    ("Blank must not count as a pass", "unknown", "scene_identity"),
-    ("Unrecognizable input must not count as a pass", "unknown", "scene_identity"),
-    ("No automatic photo change was captured within T±2;", "continue_timing", "timing_window"),
-    ("Automatic photo change occurred before T-2;", "continue_timing", "timing_window"),
-    ("Midpoint pause confirmation must finish before T-2;", "continue_timing", "timing_window"),
-    ("Midpoint pause tap must return before T-2;", "continue_timing", "timing_window"),
-    ("The playback page must have play/pause.", "control_action", "hidden_controls"),
-    ("Play/pause must be hittable.", "control_action", "hidden_controls"),
-    ("Play/pause must be hittable before continuing.", "control_action", "hidden_controls"),
-    ("Play/pause value must be readable before acting.", "control_action", "probe_readback"),
-    ("Play/pause must be paused before continuing.", "continue_timing", "control_state"),
-    ("Must be playing before the mid-interval timing.", "continue_timing", "control_state"),
-    ("Must be paused after the midpoint.", "control_action", "control_state"),
-    ("Should be playing after Continue.", "continue_timing", "control_state"),
-    ("This narrow entry must not enable a password.", "settings_navigation", "control_state"),
-    ("Playback settings must provide the autoplay toggle.", "unknown", "hidden_controls"),
-    ("Autoplay must be turned on through the real settings.", "interval_setup", "control_state"),
-    ("Autoplay must be on for the pause/background cases.", "interval_setup", "control_state"),
-    ("The pause/background cases must be able to switch to single-photo mode.", "interval_setup", "hidden_controls"),
-    ("The display policy should offer single-photo mode.", "unknown", "hidden_controls"),
-    ("Must return to the playback page after settings.", "settings_navigation", "navigation"),
-    ("Failed to persist iPad watch sample diagnostics:", "continue_timing", "evidence_capture"),
-    ("First-half-window evidence after Continue crossed the window;", "continue_timing", "timing_window"),
-    ("Auto advance came before T-2;", "continue_timing", "timing_window"),
-    ("A black screen with no new photo cannot pass automatically", "continue_timing", "scene_identity"),
-    ("The iPad transition criterion is missing the original photo luma before Continue", "continue_timing", "evidence_capture"),
-    ("Next-photo stable confirmation does not match the current raw screenshot", "visible_scene_capture", "evidence_capture"),
-    ("Next photo did not form a stable new MATCH within ", "visible_scene_capture", "scene_identity"),
-    ("Release lifecycle content: ", "visible_scene_capture", "scene_identity"),
-    ("Release lifecycle timing precondition failed: ", "continue_timing", "timing_window"),
-    ("Release lifecycle control: ", "control_action", "control_state"),
-    ("Release lifecycle focus: ", "control_action", "focus"),
-    ("Control-bar calibration must recognize the visible Settings crop.", "visible_scene_capture", "evidence_capture"),
-    ("Screenshot cannot be used as identity;", "visible_scene_capture", "scene_identity"),
-    ("Must be able to return from settings to the playback page.", "settings_navigation", "navigation"),
-    ("The settings list must provide the playback settings entry", "settings_navigation", "navigation"),
-    ("After opening playback settings, the autoplay toggle or the playback settings title must be visible.", "settings_navigation", "navigation"),
-    ("Must not use the internal progress probe as the final criterion", "unknown", "evidence_capture"),
-    ("launchEnvironment must not force-override the settings under test", "unknown", "evidence_capture"),
-    ("Must not use the internal progress value instead of time and the screen", "control_action", "evidence_capture"),
-    ("Photo changes while paused must not be judged by control value changes alone", "control_action", "evidence_capture"),
-    ("The next photo after pause must show a different public pattern", "control_action", "scene_identity"),
-    ("Tap the canvas to wake it before confirming play/pause", "control_action", "hidden_controls"),
-    ("Do not tap again and toggle playback", "control_action", "control_state"),
-    ("The confirmation wait must not happen before continueAt", "continue_timing", "timing_window"),
-    ("A leftover settings button must not stand in for operable play/pause controls", "control_action", "hidden_controls"),
-    ("The click return time must not be earlier than the press", "continue_timing", "timing_window"),
-    ("Evidence crossing the window must not pass automatically", "continue_timing", "timing_window"),
-    ("Black screen without a new photo must not pass automatically", "continue_timing", "scene_identity"),
-    ("Black screen, zoom, control bar gone or unrecognized is not a transition", "continue_timing", "scene_identity"),
-    ("An in-window start was detected but not signed off", "continue_timing", "evidence_capture"),
-    ("Uncertain samples must remain pending video review; do not default to PASS", "continue_timing", "evidence_capture"),
-    ("Too early/late transition or missing start cannot pass automatically", "continue_timing", "timing_window"),
-    ("After about a full T, it must switch to the next scene", "continue_timing", "scene_identity"),
-    ("An automatic photo change during the pause hold must not count as a pass", "paused_hold", "scene_identity"),
-    ("The pause hold must last at least T+2 seconds", "paused_hold", "timing_window"),
-    ("After pausing, the rendered transform/frame of every SmartFill slot must stay frozen", "paused_hold", "scene_identity"),
-    ("After pausing, the photo pixels outside the control bar and entry hint must stay frozen:", "paused_hold", "scene_identity"),
-    ("Screenshot must not be empty:", "unknown", "unknown"),
-    ("No new stable frame appeared before going to the background", "visible_scene_capture", "scene_identity"),
-    ("Turning off Autoplay in settings must take effect immediately", "unknown", "unknown"),
-    ("After opening settings, enter playback settings before locating the interval row", "settings_navigation", "navigation"),
-    ("Playback page should show the 'Next' button", "control_action", "hidden_controls"),
-    ("The first-boot page must show the Save Settings button.", "firstboot_setup", "navigation"),
-    ("After a successful save, the app must reach mode selection.", "firstboot_setup", "navigation"),
-    ("A fresh install must reach the normal first-boot page.", "firstboot_setup", "navigation"),
-    ("The first-boot page must show the API Key field.", "firstboot_setup", "navigation"),
-    ("The first-boot page must show the Test Connection button.", "firstboot_setup", "navigation"),
-    ("Save must become enabled after a real connection test succeeds.", "firstboot_setup", "control_state"),
-    ("A cold launch with saved settings must not return to the first-boot page.", "cold_relaunch", "navigation"),
-    ("A configured cold launch must go straight to the playback page.", "cold_relaunch", "navigation"),
-    ("Chose filter but reached the playback page, so the mode card tap did not register.", "mode_selection", "navigation"),
-    ("Still on the mode page after Continue; filter mode did not start.", "mode_selection", "navigation"),
-    ("Filter mode must reach the filter summary page.", "mode_selection", "navigation"),
-    ("Going back from the filter summary must return to mode selection.", "mode_selection", "navigation"),
-    ("Random mode must reach the playback page.", "playback_entry", "navigation"),
-    ("Mode departure failed after one hittable Continue without a password prompt;", "playback_entry", "navigation"),
-    ("First-boot mode navigation must dismiss the exact password prompt,", "mode_selection", "navigation"),
-    ("The playback page must show the Previous button.", "control_action", "hidden_controls"),
-    ("After auto-advance, the playback controls must be revealable.", "control_action", "hidden_controls"),
-    ("The playback page must show Play/Pause.", "control_action", "hidden_controls"),
-    ("After pausing, the playback controls must still be revealable.", "control_action", "hidden_controls"),
-    ("After pausing, the control value must be play.", "control_action", "control_state"),
-    ("Album capture preparation must reach a stable scene before Pause.", "control_action", "timing_window"),
-    ("Album capture preparation paused during a transition; Pause freezes the current layers.", "control_action", "control_state"),
-    ("Album capture preparation must observe paused playback after one Pause.", "control_action", "control_state"),
-    ("Album capture preparation must reach a complete paused scene within the playback capture budget.", "visible_scene_capture", "probe_readback"),
-    ("Album capture pixels must match at least 0.6 seconds apart within the playback capture budget.", "visible_scene_capture", "scene_identity"),
-    ("Album interval confirmation must read a valid non-empty scene progress probe before Pause.", "interval_setup", "probe_readback"),
-    ("Album interval confirmation must observe a new scene after measuring a short interval before Pause.", "interval_setup", "timing_window"),
-    ("Album interval confirmation must measure the current scene's 30-second progress slope before Pause.", "interval_setup", "interval_readback"),
-    ("Album Next must advance the paused scene within the playback capture budget.", "history_navigation", "navigation"),
-    ("Next control must be actionable before tapping.", "control_action", "hidden_controls"),
-    ("Final Next preparation must provide an actionable control.", "control_action", "hidden_controls"),
-    ("The current scene must be readable before tapping Next.", "visible_scene_capture", "scene_identity"),
-    ("One Next tap must change the visible scene.", "control_action", "scene_identity"),
-    ("Play/pause value must be readable before pausing.", "control_action", "probe_readback"),
-    ("Playback page must provide play/pause.", "control_action", "hidden_controls"),
-    ("Playback page must provide the settings entry.", "settings_navigation", "hidden_controls"),
-    ("Tapping settings must open the settings page.", "settings_navigation", "navigation"),
-    ("Resuming must continue from the current photo, with the control value back to pause.", "control_action", "control_state"),
-    ("Previous must be disabled at the history boundary when playback starts.", "history_navigation", "control_state"),
-    ("Playback must start with exactly one retained history entry.", "history_navigation", "control_state"),
-    ("After two Next taps, Previous must be enabled.", "history_navigation", "control_state"),
-    ("Visual ID failed ", "visible_scene_capture", "scene_identity"),
-    ("After a pause of at least 10 seconds, autoplay must not resume on its own.", "paused_hold", "control_state"),
-    ("After injecting the public fixture, the app must reach the mode page.", "mode_selection", "navigation"),
-    ("After returning to the playback page, the control bar must be revealed again.", "settings_navigation", "hidden_controls"),
-    ("The settings button must be tappable.", "settings_navigation", "hidden_controls"),
-    ("The settings list must offer the playback settings entry", "settings_navigation", "navigation"),
-    ("Could not return from playback settings to the playback page", "settings_navigation", "navigation"),
-    ("Playback settings must offer the display mode segmented control.", "display_policy", "navigation"),
-    ("Display mode must offer single photo mode.", "display_policy", "navigation"),
-    ("The segmented control must remain after selecting single photo mode.", "display_policy", "control_state"),
-    ("The display mode option must keep its Simplified Chinese copy.", "display_policy", "control_state"),
-    ("Playback settings must offer the EXIF toggle.", "settings_navigation", "navigation"),
-    ("Show EXIF info must be on.", "interval_setup", "control_state"),
-    ("The playback interval must be 5 seconds.", "interval_setup", "interval_readback"),
-    ("After identifying A2, Next must be tappable to check its successor.", "pause_window", "hidden_controls"),
-    ("PRECONDITION_FAIL: order became A2→", "pause_window", "scene_identity"),
-    ("PRECONDITION_FAIL: A2 successor is not A3 (", "pause_window", "scene_identity"),
-    ("PRECONDITION_FAIL: not the large-text A2 after returning.", "pause_window", "scene_identity"),
-    ("PRECONDITION_FAIL: could not identify the large-text A2 using Next.", "pause_window", "scene_identity"),
-    ("Window missed or required frames missing: ", "pause_window", "evidence_capture"),
-    ("The midpoint hook must leave the frame-synchronized probe paused.", "pause_window", "probe_readback"),
-    ("probe_hit=MISS: frame-synchronized probe never saw outgoing translucent and incoming opacity=0 in 7 s.", "pause_window", "timing_window"),
-    ("visual_verdict=MISSING_FRAMES: missing a window-detected, after-pause, after-pause-0_3s or play-to-pause keepAlways frame.", "pause_window", "evidence_capture"),
-    ("visual_verdict=BLACK_OR_BLANK: synced probe missing after pause, or outgoing opacity already 0.", "pause_window", "probe_readback"),
-    ("After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0.", "pause_window", "probe_readback"),
-    ("The paused pause-window probe identity must not change.", "pause_window", "scene_identity"),
-    ("Paused pause-window frames must be pixel-identical.", "pause_window", "scene_identity"),
-    ("Pause window bright proof must show A2.", "pause_window", "scene_identity"),
-    ("Pause window bright proof must be one frozen opaque scene.", "pause_window", "probe_readback"),
-    ("Pause window midpoint must contain visible photo pixels.", "pause_window", "scene_identity"),
-    ("Target window shows the wrong image; cannot count as SUCCESS.", "pause_window", "scene_identity"),
-    ("The control bar must be visible before opening settings.", "control_action", "hidden_controls"),
-    ("The control bar must be visible before starting pause-window playback.", "control_action", "hidden_controls"),
-    ("After tapping Play, the button value must become pause.", "control_action", "control_state"),
-    ("Pause before opening settings or identifying photos, so autoplay does not move away.", "control_action", "control_state"),
-    ("visual_verdict=LATE: a complete A3 is visible after pause.", "pause_window", "scene_identity"),
-    ("After late completion the current public mark must stay: no flash back, all black or unreadable: ", "late_image", "scene_identity"),
-    ("Next must be tappable twice right after entering the slideshow, before old image requests finish.", "late_image", "navigation"),
-    ("Held response budget exhausted before release:", "late_image", "timing_window"),
-    ("Late image held asset must belong to the cold-launch scene before the first Next.", "late_image", "fixture_response"),
-    ("Late image fixture control failed:", "late_image", "fixture_response"),
-    ("Late image cold launch must restore paused playback.", "cold_relaunch", "control_state"),
-    ("Late image preparation must enter playback before opening Settings.", "late_image", "navigation"),
-    ("Late image preparation must open Playback Settings.", "late_image", "navigation"),
-    ("Late image preparation must expose the Autoplay switch.", "late_image", "navigation"),
-    ("Late image preparation must turn Autoplay off.", "late_image", "control_state"),
-    ("Late image preparation must focus Settings.", "late_image", "focus"),
-    ("Late image preparation must focus Playback Settings.", "late_image", "focus"),
-    ("Late image preparation must expose the Autoplay option.", "late_image", "navigation"),
-    ("Late image preparation must focus Autoplay.", "late_image", "focus"),
-    ("Late image preparation must expose Autoplay Off.", "late_image", "navigation"),
-    ("Late image preparation must focus Autoplay Off.", "late_image", "focus"),
-    ("The fixture must actually deliver a failing image response", "image_recovery", "fixture_response"),
-    ("Fixture control must acknowledge its response mode", "image_recovery", "fixture_response"),
-    ("After turning EXIF off, the info card in the upper-right area of the public photo must disappear from the screen.", "exif_ownership", "exif_visibility"),
-    ("The required PNG with EXIF off still shows the info card.", "exif_ownership", "exif_visibility"),
-    ("Can't check EXIF: photo status ", "unknown", "scene_identity"),
-    ("EXIF does not match the photo: mark=", "unknown", "exif_correspondence"),
-    ("The EXIF toggle must reach the target state through the real settings.", "unknown", "control_state"),
-    ("Default focus on the mode selection page must land on random playback.", "mode_selection", "focus"),
-    ("Focus on the mode page must be able to move to filtered playback.", "mode_selection", "focus"),
-    ("After choosing a mode, focus must be able to move down to the Continue button.", "mode_selection", "focus"),
-    ("After returning to mode selection, default focus must go back to random playback.", "mode_selection", "focus"),
-    ("After Continue, the app must reach the playback page and show the control bar.", "playback_entry", "navigation"),
-    ("Before sending the wake arrow key, the hidden receiver layer must have system focus.", "hidden_controls", "focus"),
-    ("After the control bar wakes again, focus must land on Play/Pause.", "hidden_controls", "focus"),
-    ("After pressing Down, the hint and the control bar must hide.", "hidden_controls", "hidden_controls"),
-    ("With the control bar hidden, an arrow key must wake it again.", "hidden_controls", "hidden_controls"),
-    ("Default focus on the filter summary must land on the album filter.", "filter_selection", "focus"),
-    ("Focus must land on the target album.", "unknown", "focus"),
-    ("The album list must show ", "unknown", "navigation"),
-    ("An empty album must show the frozen existing production empty-result copy and must not keep the old non-empty pool", "filter_edit", "scene_identity"),
-    ("Start Playback must be disabled with an empty selection.", "filter_selection", "control_state"),
-    ("Start Playback must be disabled with 0 albums / 0 people.", "filter_selection", "control_state"),
-    ("Start Playback must be enabled after selecting the target album.", "filter_selection", "control_state"),
-    ("Filtered playback must be startable after selecting the target album", "filter_selection", "control_state"),
-    ("The album filter entry must be shown.", "unknown", "navigation"),
-    ("The person filter entry must be shown.", "unknown", "navigation"),
-    ("Opening the album filter must show album cards or a loading state.", "unknown", "navigation"),
-    ("Back from the people list must return to the filter screen.", "filter_selection", "navigation"),
-    ("Back from the album list must return to the filter screen.", "unknown", "navigation"),
-    ("Focus must land on the target person.", "filter_selection", "focus"),
-    ("Person selection preparation must provide an actionable card;", "filter_selection", "control_state"),
-    ("Start Playback must open the playback screen.", "unknown", "navigation"),
-    ("Clear selection must actually receive remote focus", "filter_edit", "focus"),
-    ("The editor's Done must actually receive remote focus", "filter_edit", "focus"),
-    ("After Clear, both target and non-target albums must really become unselected; re-tapping each card must not stand in for the clear result", "filter_edit", "control_state"),
-    ("The filter settings editor must offer a Done entry", "filter_edit", "navigation"),
-    ("Finishing the edit must return to the real playback settings screen", "filter_edit", "navigation"),
-    ("Server B must clear A's album selection", "server_switch", "control_state"),
-    ("After switching servers the UI must not keep server A album/person IDs: ", "server_switch", "control_state"),
-    ("The display mode's selected state must be read back.", "display_policy", "control_state"),
-    ("No two distinct photos seen within four public album candidates; all failing originals are kept.", "display_policy", "scene_identity"),
-    ("After the change, a still frame taken mid-transition must not pass", "display_policy", "scene_identity"),
-    ("After changing the display mode, playback must still be on screen in the same live process.", "display_policy", "navigation"),
-    ("No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept.", "display_policy", "scene_identity"),
-    ("After the change it must be a stable single photo from the target album, not a transition or multi-photo", "display_policy", "scene_identity"),
-    ("The same live app process must run before and after the display policy change", "display_policy", "process_lifetime"),
-    ("After the server switch, single-photo mode must show a stable single photo from B's target album", "server_switch", "scene_identity"),
-    ("The same process must run before and after applying single-photo mode after the server switch", "server_switch", "process_lifetime"),
-    ("SmartFill must expose the complete manifest, stable visible render state and history cursor together", "visible_scene_capture", "probe_readback"),
-    ("After tapping next, the fully visible SmartFill scene identity did not change in ", "history_navigation", "scene_identity"),
-    ("scene identity did not change", "history_navigation", "scene_identity"),
-    ("Pausing must freeze the current transform progress", "paused_hold", "scene_identity"),
-    ("SmartFill Pause preparation was rejected before the deadline.", "control_action", "timing_window"),
-    ("The new scene from a manual next while paused must stay still at p=0", "paused_hold", "scene_identity"),
-    ("The scene from a manual previous while paused must stay still at p=0", "paused_hold", "scene_identity"),
-    ("Play must make the current still scene start moving from p=0 immediately", "control_action", "scene_identity"),
-    ("After starting playback, the playback page should open and show the control bar", "playback_entry", "navigation"),
-    ("The slideshow control never became tappable before the deadline.", "control_action", "hidden_controls"),
-    ("The slideshow Settings tap had no observed outcome before the deadline.", "settings_navigation", "navigation"),
-    ("The slideshow Settings button must be ready before opening playback settings.", "settings_navigation", "hidden_controls"),
-    ("Playback page should show the settings button", "unknown", "hidden_controls"),
-    ("After entering the playback page, the settings button should be visible", "playback_entry", "navigation"),
-    ("Before each screenshot, the playback control bar should wake up reliably", "visible_scene_capture", "hidden_controls"),
-    ("The control bar may have auto-hidden while waiting for the sampling overlay; it should wake up again before tapping next", "visible_scene_capture", "hidden_controls"),
-    ("Before retrying next, the playback control bar should wake up again", "control_action", "hidden_controls"),
-    ("Could not return from the playback settings page to the slideshow", "settings_navigation", "navigation"),
-    ("After returning from settings, confirm stable hidden receiver focus before one directional press.", "unknown", "focus"),
-    ("After returning from settings with the bar hidden, the hidden receiver must have stable focus.", "settings_navigation", "focus"),
-    ("After returning from settings, the playback transition must finish before a directional press.", "unknown", "timing_window"),
-    ("After the first previous, one earlier history entry remains, so the button must stay enabled.", "history_navigation", "control_state"),
-    ("Once the real controlled service is reachable, the connection-test-passed status must show.", "firstboot_setup", "navigation"),
-    ("Once the real controlled server is reachable, connection test passed must be shown.", "firstboot_setup", "navigation"),
-    ("After the second previous returns to the history start, the button must be disabled again.", "history_navigation", "control_state"),
-    ("After choosing random playback, focus must be able to move down to the Continue button.", "mode_selection", "focus"),
-    ("After consuming one step of forward history, focus must be able to move to Next again.", "history_navigation", "focus"),
-    ("With the real controlled service reachable, the connection test must show as passed.", "firstboot_setup", "navigation"),
-    ("While the one-time hint is shown, default focus must land on the settings button.", "playback_entry", "focus"),
-    ("Focus on the filter summary page must be able to move to Back to Mode Selection.", "mode_selection", "focus"),
-    ("After returning from settings, must wait for the playback transition to finish.", "settings_navigation", "timing_window"),
-    ("Going back from the filter summary must return to the mode selection page.", "mode_selection", "navigation"),
-    ("Before the history chain starts, focus must be able to move to Play/Pause.", "history_navigation", "focus"),
-    ("After settings return, must confirm the hidden receiver holds focus stably", "unknown", "focus"),
-    ("Pressing Back/Menu on the settings page must return to the playback page.", "settings_navigation", "navigation"),
-    ("Identity comes only from public fixture photos, never from logs or index", "visible_scene_capture", "evidence_capture"),
-    ("After the control bar hides, the wake focus receiver layer must appear.", "hidden_controls", "hidden_controls"),
-    ("After the first next settles, focus must be able to move to Next again.", "history_navigation", "focus"),
-    ("After choosing filtered playback, the Continue button must be enabled.", "mode_selection", "control_state"),
-    ("After settings return, no direction key until the transition completes", "unknown", "timing_window"),
-    ("After submitting the URL, focus must be able to move down to API Key.", "firstboot_setup", "focus"),
-    ("The index probe must change after a playback action. advanceObserved=", "history_navigation", "probe_readback"),
-    ("Must focus the system keyboard submit button before submitting text.", "firstboot_setup", "focus"),
-    ("After choosing random playback, the Continue button must be enabled.", "mode_selection", "control_state"),
-    ("After going back once, focus must be able to move to Previous again.", "history_navigation", "focus"),
-    ("After a successful connection, the Save Settings button must appear.", "firstboot_setup", "navigation"),
-    ("Returning to playback must not require the control bar to be visible", "settings_navigation", "evidence_capture"),
-    ("Focus in the playback control bar must be able to move to Settings.", "settings_navigation", "focus"),
-    ("After saving settings, the app must reach the mode selection page.", "mode_selection", "navigation"),
-    ("After choosing filtered playback, the Continue button must appear.", "mode_selection", "navigation"),
-    ("At the history frontier, focus must be able to move to Play/Pause.", "history_navigation", "focus"),
-    ("During a pause of at least 10 seconds, autoplay must not catch up.", "paused_hold", "scene_identity"),
-    ("After autoplay resumes, focus on wake must return to Play/Pause.", "control_action", "focus"),
-    ("A must be at the history start of the current playback session.", "history_navigation", "control_state"),
-    ("Focus the system keyboard submit button before submitting text.", "firstboot_setup", "focus"),
-    ("After submitting text, focus must return to the original field.", "unknown", "focus"),
-    ("After Select on settings, must enter settings or the PIN gate.", "settings_navigation", "navigation"),
-    ("After the pause wait, focus on wake must return to Play/Pause.", "control_action", "focus"),
-    ("Wake after settings return is missing before/after screenshots", "unknown", "evidence_capture"),
-    ("After a successful connection, Save Settings must be enabled.", "firstboot_setup", "control_state"),
-    ("After choosing random play, focus must move down to Continue.", "mode_selection", "focus"),
-    ("The start of the history chain must show the previous button.", "history_navigation", "hidden_controls"),
-    ("Before checking autoplay, focus must be able to move to Next.", "control_action", "focus"),
-    ("A forced display mode must not replace the real settings path", "visible_scene_capture", "evidence_capture"),
-    ("The first playback round must show the one-time remote hint.", "playback_entry", "navigation"),
-    ("Once history exists, focus must be able to move to Previous.", "history_navigation", "focus"),
-    ("After auto-advance, focus on wake must return to Play/Pause.", "control_action", "focus"),
-    ("At the initial history boundary, previous must be disabled.", "history_navigation", "control_state"),
-    ("The end of the history chain must show the previous button.", "history_navigation", "hidden_controls"),
-    ("The paused-frame comparison must span at least 10 seconds.", "paused_hold", "timing_window"),
-    ("The second next must advance the playback cursor further.", "history_navigation", "navigation"),
-    ("Pressing Select after pausing must resume autoplay.", "control_action", "control_state"),
-    ("Autoplay must be pausable again before entering settings.", "control_action", "control_state"),
-    ("The first-boot form must show the Test Connection button.", "firstboot_setup", "navigation"),
-    ("Autoplay must be paused before the history chain starts.", "history_navigation", "control_state"),
-    ("The playback page must expose the read-only index probe.", "history_navigation", "probe_readback"),
-    ("Focus must be able to move from Next back to Play/Pause.", "history_navigation", "focus"),
-    ("Select must not accidentally hit the API Key help sheet.", "firstboot_setup", "navigation"),
-    ("The playback control bar must show the previous button.", "control_action", "hidden_controls"),
-    ("Pressing Select after auto-advance must pause playback.", "control_action", "control_state"),
-    ("After resuming, playback must advance to another photo.", "history_navigation", "probe_readback"),
-    ("After submitting text, focus must return to the field.", "firstboot_setup", "focus"),
-    ("After connecting, the Save Settings button must show.", "firstboot_setup", "navigation"),
-    ("After choosing random play, Continue must be enabled.", "mode_selection", "control_state"),
-    ("Returning to playback must confirm the playback layer", "unknown", "navigation"),
-    ("The index probe must change after a playback action.", "history_navigation", "probe_readback"),
-    ("Mode selection focus must start on random playback.", "mode_selection", "focus"),
-    ("Focus must be able to move from Play/Pause to Next.", "history_navigation", "focus"),
-    ("Pause/continue tvOS must run on a tvOS Simulator.", "unknown", "unknown"),
-    ("After the pause wait, autoplay must be resumable.", "control_action", "control_state"),
-    ("First directional press must only wake controls.", "unknown", "hidden_controls"),
-    ("Directional key must wake the playback controls.", "hidden_controls", "hidden_controls"),
-    ("After saving settings, mode selection must open.", "mode_selection", "navigation"),
-    ("The full tvOS flow must run on a tvOS Simulator.", "unknown", "unknown"),
-    ("The first next must advance the playback cursor.", "history_navigation", "navigation"),
-    ("The settings button must open the settings page.", "settings_navigation", "navigation"),
-    ("The first-boot form must show the API Key field.", "firstboot_setup", "navigation"),
-    ("An arrow key must wake the playback control bar.", "hidden_controls", "hidden_controls"),
-    ("Settings button must have focus before opening.", "settings_navigation", "focus"),
-    ("URL submitted; focus must move down to API Key.", "firstboot_setup", "focus"),
-    ("After choosing random play, Continue must show.", "mode_selection", "navigation"),
-    ("A clean install must reach the first-boot form.", "firstboot_setup", "navigation"),
-    ("A clean install must open the first-boot form.", "firstboot_setup", "navigation"),
-    ("The server address must be submitted verbatim.", "firstboot_setup", "control_state"),
-    ("Playback page must show the settings button.", "settings_navigation", "hidden_controls"),
-    ("First-boot form must show the API Key field.", "firstboot_setup", "navigation"),
-    ("Control bar must show after random playback.", "playback_entry", "hidden_controls"),
-    ("Focus must return to play/pause after next.", "control_action", "focus"),
-    ("The system keyboard must show Next or Done.", "unknown", "navigation"),
-    ("Must not press twice to mask the first wake", "unknown", "hidden_controls"),
-    ("First-boot form must show Test Connection.", "firstboot_setup", "navigation"),
-    ("Settings home must show playback settings.", "settings_navigation", "navigation"),
-    ("Settings subpage must show target option ", "settings_navigation", "navigation"),
-    ("Pausing must not advance an extra photo.", "paused_hold", "scene_identity"),
-    ("The field must be focused before typing.", "unknown", "focus"),
-    ("A missing image must not count as a pass", "visible_scene_capture", "scene_identity"),
-    ("The field must be focused before input.", "firstboot_setup", "focus"),
-    ("After submitting, focus must return to the original field.", "firstboot_setup", "focus"),
-    ("System keyboard must show Next or Done.", "firstboot_setup", "navigation"),
-    ("After pause, focus must reach next.", "control_action", "focus"),
-    ("Must return to playback settings.", "settings_navigation", "focus"),
-    ("Focus must reach play/pause.", "control_action", "focus"),
-    ("Interval options are missing", "interval_setup", "interval_readback"),
-    ("Settings page must have ", "settings_navigation", "navigation"),
-    ("Must be able to focus ", "unknown", "focus"),
-    ("After choosing settings.playback.", "unknown", "control_state"),
-    ("Screenshot before-pause cannot serve as identity:", "visible_scene_capture", "scene_identity"),
-    ("Screenshot after-next cannot serve as identity:", "visible_scene_capture", "scene_identity"),
-    ("Screenshot before-background cannot serve as identity:", "visible_scene_capture", "scene_identity"),
-    ("Screenshot after-background cannot serve as identity:", "visible_scene_capture", "scene_identity"),
-    ("The playback index probe is empty, so autoplay and retained-history cannot be proven.", "history_navigation", "probe_readback"),
-    ("Failed to get matching snapshot", "unknown", "snapshot_query"),
-    ("Failed to determine hittability", "unknown", "snapshot_query"),
-    ("Failed to terminate com.331works.immichSlides:", "unknown", "process_lifetime"),
-    ("Application 'com.331works.immichSlides' does not have a process ID", "unknown", "process_lifetime"),
-    ("Failed to launch com.331works.immichSlides:", "unknown", "process_lifetime"),
-    ("Failed to launch Application 'com.331works.immichSlides':", "unknown", "process_lifetime"),
+    ('Smoke flow: ', 'unknown', 'control_state'),
+    ('Fresh install must open the normal first-boot page.', 'firstboot_setup', 'navigation'),
+    ('First-boot page must show the API Key field.', 'firstboot_setup', 'navigation'),
+    ('The API Key must be entered into the secure field.', 'firstboot_setup', 'control_state'),
+    ('First-boot page must show Test Connection.', 'firstboot_setup', 'navigation'),
+    ('First-boot page must show the Save Settings button.', 'firstboot_setup', 'navigation'),
+    ('A successful save must lead to mode selection.', 'firstboot_setup', 'navigation'),
+    ('The mode page must also offer the filter entry.', 'mode_selection', 'navigation'),
+    ('Playback page after uninstall means a dirty install container;', 'firstboot_setup', 'navigation'),
+    ('The public test URL must be entered verbatim,', 'firstboot_setup', 'control_state'),
+    ('API Key must reach the secure field;', 'firstboot_setup', 'control_state'),
+    ('The first-boot filter summary must offer a way back to mode selection.', 'mode_selection', 'navigation'),
+    ('The iOS filter summary should no longer use a bottom back button,', 'mode_selection', 'navigation'),
+    ('Connection test showed a failure alert:', 'firstboot_setup', 'navigation'),
+    ('The first-boot page must show the Save Settings button.', 'firstboot_setup', 'navigation'),
+    ('After a successful save, the app must reach mode selection.', 'firstboot_setup', 'navigation'),
+    ('A fresh install must reach the normal first-boot page.', 'firstboot_setup', 'navigation'),
+    ('The first-boot page must show the API Key field.', 'firstboot_setup', 'navigation'),
+    ('The first-boot page must show the Test Connection button.', 'firstboot_setup', 'navigation'),
+    ('Save must become enabled after a real connection test succeeds.', 'firstboot_setup', 'control_state'),
+    ('A cold launch with saved settings must not return to the first-boot page.', 'cold_relaunch', 'navigation'),
+    ('A configured cold launch must go straight to the playback page.', 'cold_relaunch', 'navigation'),
+    ('Chose filter but reached the playback page, so the mode card tap did not register.', 'mode_selection', 'navigation'),
+    ('Still on the mode page after Continue; filter mode did not start.', 'mode_selection', 'navigation'),
+    ('Filter mode must reach the filter summary page.', 'mode_selection', 'navigation'),
+    ('Going back from the filter summary must return to mode selection.', 'mode_selection', 'navigation'),
+    ('Random mode must reach the playback page.', 'playback_entry', 'navigation'),
+    ('Mode departure failed after one hittable Continue without a password prompt;', 'playback_entry', 'navigation'),
+    ('First-boot mode navigation must dismiss the exact password prompt,', 'mode_selection', 'navigation'),
+    ('After injecting the public fixture, the app must reach the mode page.', 'mode_selection', 'navigation'),
+    ('Default focus on the mode selection page must land on random playback.', 'mode_selection', 'focus'),
+    ('Focus on the mode page must be able to move to filtered playback.', 'mode_selection', 'focus'),
+    ('After choosing a mode, focus must be able to move down to the Continue button.', 'mode_selection', 'focus'),
+    ('After returning to mode selection, default focus must go back to random playback.', 'mode_selection', 'focus'),
+    ('After Continue, the app must reach the playback page and show the control bar.', 'playback_entry', 'navigation'),
+    ('After starting playback, the playback page should open and show the control bar', 'playback_entry', 'navigation'),
+    ('After entering the playback page, the settings button should be visible', 'playback_entry', 'navigation'),
+    ('Once the real controlled service is reachable, the connection-test-passed status must show.', 'firstboot_setup', 'navigation'),
+    ('Once the real controlled server is reachable, connection test passed must be shown.', 'firstboot_setup', 'navigation'),
+    ('After choosing random playback, focus must be able to move down to the Continue button.', 'mode_selection', 'focus'),
+    ('With the real controlled service reachable, the connection test must show as passed.', 'firstboot_setup', 'navigation'),
+    ('While the one-time hint is shown, default focus must land on the settings button.', 'playback_entry', 'focus'),
+    ('Focus on the filter summary page must be able to move to Back to Mode Selection.', 'mode_selection', 'focus'),
+    ('Going back from the filter summary must return to the mode selection page.', 'mode_selection', 'navigation'),
+    ('After choosing filtered playback, the Continue button must be enabled.', 'mode_selection', 'control_state'),
+    ('After submitting the URL, focus must be able to move down to API Key.', 'firstboot_setup', 'focus'),
+    ('Must focus the system keyboard submit button before submitting text.', 'firstboot_setup', 'focus'),
+    ('After choosing random playback, the Continue button must be enabled.', 'mode_selection', 'control_state'),
+    ('After a successful connection, the Save Settings button must appear.', 'firstboot_setup', 'navigation'),
+    ('After saving settings, the app must reach the mode selection page.', 'mode_selection', 'navigation'),
+    ('After choosing filtered playback, the Continue button must appear.', 'mode_selection', 'navigation'),
+    ('Focus the system keyboard submit button before submitting text.', 'firstboot_setup', 'focus'),
+    ('After a successful connection, Save Settings must be enabled.', 'firstboot_setup', 'control_state'),
+    ('After choosing random play, focus must move down to Continue.', 'mode_selection', 'focus'),
+    ('The first playback round must show the one-time remote hint.', 'playback_entry', 'navigation'),
+    ('The first-boot form must show the Test Connection button.', 'firstboot_setup', 'navigation'),
+    ('Select must not accidentally hit the API Key help sheet.', 'firstboot_setup', 'navigation'),
+    ('After submitting text, focus must return to the field.', 'firstboot_setup', 'focus'),
+    ('After connecting, the Save Settings button must show.', 'firstboot_setup', 'navigation'),
+    ('After choosing random play, Continue must be enabled.', 'mode_selection', 'control_state'),
+    ('Mode selection focus must start on random playback.', 'mode_selection', 'focus'),
+    ('After saving settings, mode selection must open.', 'mode_selection', 'navigation'),
+    ('The first-boot form must show the API Key field.', 'firstboot_setup', 'navigation'),
+    ('URL submitted; focus must move down to API Key.', 'firstboot_setup', 'focus'),
+    ('After choosing random play, Continue must show.', 'mode_selection', 'navigation'),
+    ('A clean install must reach the first-boot form.', 'firstboot_setup', 'navigation'),
+    ('A clean install must open the first-boot form.', 'firstboot_setup', 'navigation'),
+    ('The server address must be submitted verbatim.', 'firstboot_setup', 'control_state'),
+    ('First-boot form must show the API Key field.', 'firstboot_setup', 'navigation'),
+    ('Control bar must show after random playback.', 'playback_entry', 'hidden_controls'),
+    ('First-boot form must show Test Connection.', 'firstboot_setup', 'navigation'),
+    ('The field must be focused before input.', 'firstboot_setup', 'focus'),
+    ('After submitting, focus must return to the original field.', 'firstboot_setup', 'focus'),
+    ('System keyboard must show Next or Done.', 'firstboot_setup', 'navigation'),
 )
 
 
@@ -1857,38 +527,6 @@ def normalized_xctest_failure(message):
             text = text[len(wrapper):]
             break
     return text
-
-
-def public_app_timeline_failure_message(message):
-    """Retain fixed timeline errors and bounded pixel statistics, never private text."""
-    text = normalized_xctest_failure(message)
-    prefix = "App timeline: "
-    if text is None or not text.startswith(prefix):
-        return None
-    reason = text[len(prefix):].removesuffix('"')
-    pixel = re.fullmatch(
-        r"frozen photo pixels changed site=(?:frozen-reference|pause-hold) "
-        r"maximum_channel_difference=(0|[1-9][0-9]{0,2}) differing_pixel_count=(?:0|[1-9][0-9]{0,7})"
-        r"(?: mean_channel_difference=(0|-?[1-9][0-9]{0,2})"
-        r" control_bar_before=(?:visible|hidden|unknown) control_bar_after=(?:visible|hidden|unknown)"
-        r" exif_before=(?:visible|hidden|unknown) exif_after=(?:visible|hidden|unknown))?", reason)
-    if pixel is not None and int(pixel.group(1)) <= 255 and (pixel.group(2) is None or abs(int(pixel.group(2))) <= 255):
-        return prefix + reason
-    return prefix + reason if reason in APP_TIMELINE_FAILURE_REASONS else APP_TIMELINE_FAILURE_REDACTED
-
-
-def public_xctest_failure_message(message, *, method):
-    """Publish only the reviewed per-method failure grammars."""
-    if method in APP_TIMELINE_METHODS:
-        return public_app_timeline_failure_message(message)
-    if method != PUBLIC_FAILURE_MESSAGE_METHOD_BY_SUITE["tvos-flow"]:
-        return None
-    text = normalized_xctest_failure(message)
-    if text is None or not text.startswith(TVOS_PUBLICATION_FAILURE_PREFIX):
-        return None
-    if text == TVOS_PUBLICATION_FAILURE_PREFIX or re.fullmatch(TVOS_PUBLICATION_FAILURE_PATTERN, text):
-        return text
-    return TVOS_PUBLICATION_FAILURE_PREFIX + " [diagnostic redacted]"
 
 
 def classify_messages(messages):
@@ -1959,17 +597,15 @@ def test_node_diagnostics(payload):
 def validate_diagnostic_fields(value):
     """Reject free text, unpaired fields and non-string values, without echoing them."""
     if isinstance(value, dict):
+        if {"environment_limit", "validator_failure_message"} & value.keys():
+            raise ValueError("retired diagnostic field")
         if FAILURE_MESSAGES_FIELD in value:
             validate_failure_messages(value[FAILURE_MESSAGES_FIELD])
-        if ENVIRONMENT_LIMIT_FIELD in value:
-            validate_environment_limit(value[ENVIRONMENT_LIMIT_FIELD])
         if FIRST_FAILURE_FIELD in value:
             validate_first_failure(value[FIRST_FAILURE_FIELD])
         if BOUNDED_DIAGNOSTICS_FIELD in value:
             from ci_bounded_diagnostics import validate_receipt
             validate_receipt(value[BOUNDED_DIAGNOSTICS_FIELD])
-        if VALIDATOR_FAILURE_FIELD in value:
-            validate_validator_failure_message(value[VALIDATOR_FAILURE_FIELD])
         if DIAGNOSTIC_FIELDS & value.keys():
             if not DIAGNOSTIC_FIELDS <= value.keys():
                 raise ValueError("failure diagnostics require both enum fields")
@@ -1984,8 +620,7 @@ def validate_diagnostic_fields(value):
 
 
 def scan_diagnostic_json(data):
-    diagnostic_fields = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD,
-                                            ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD}
+    diagnostic_fields = DIAGNOSTIC_FIELDS | {BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD, FAILURE_MESSAGES_FIELD}
     bounded_seen = False
     first_failure_seen = False
     duplicate_seen = False
@@ -1998,8 +633,8 @@ def scan_diagnostic_json(data):
             duplicate_seen |= key in value
             value[key] = child
         bounded_seen |= BOUNDED_DIAGNOSTICS_FIELD in value
-        first_failure_seen |= FIRST_FAILURE_FIELD in value or ENVIRONMENT_LIMIT_FIELD in value
-        checked = deepcopy(value) if BOUNDED_DIAGNOSTICS_FIELD in value or ENVIRONMENT_LIMIT_FIELD in value else value
+        first_failure_seen |= FIRST_FAILURE_FIELD in value
+        checked = deepcopy(value) if BOUNDED_DIAGNOSTICS_FIELD in value else value
         validate_diagnostic_fields(checked)
         if checked != value:
             raise ValueError("failure locations: invalid projection")
@@ -2012,6 +647,41 @@ def scan_diagnostic_json(data):
             raise ValueError("duplicate first failure JSON key")
     except (json.JSONDecodeError, UnicodeDecodeError):
         ascii_keys = re.sub(rb"\\u00([0-9a-fA-F]{2})", lambda match: bytes([int(match[1], 16)]), data)
-        if any(('"' + field + '"').encode() in ascii_keys for field in (BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD)) or any(
-                ('"' + field + '"').encode() in data for field in DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD}):
+        if any(('"' + field + '"').encode() in ascii_keys for field in (BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD, FAILURE_MESSAGES_FIELD)) or any(
+                ('"' + field + '"').encode() in data for field in DIAGNOSTIC_FIELDS):
             raise ValueError("invalid failure diagnostic JSON")
+
+
+def validate_ui_first_failure_images(directory, summary):
+    from ci_summary import require
+    declared = summary["population"]["declared"]
+    observed = {entry["identity"]["key"]: entry for entry in summary["population"]["observed"]}
+    expected = set()
+    for index, identity in enumerate(declared):
+        entry = observed.get(identity["key"], {})
+        attempts = entry.get("attempts", []) + ([entry["retry_failure"]] if "retry_failure" in entry else [])
+        for attempt in attempts:
+            receipt = attempt.get(FIRST_FAILURE_FIELD)
+            if receipt is None or receipt["screenshot"]["status"] != "captured":
+                continue
+            folder = directory / ("first-failure-attempt-" + str(attempt["number"]))
+            require(folder.is_dir() and not folder.is_symlink(), "invalid first failure package directory")
+            path = folder / f"{index}.png"
+            validate_first_failure_image(path, receipt)
+            expected.add(path)
+    folders = list(directory.glob("first-failure-attempt-*"))
+    require(all(folder.is_dir() and not folder.is_symlink() and folder in {path.parent for path in expected}
+                for folder in folders), "invalid first failure package directory")
+    actual = {path for folder in folders for path in folder.iterdir()}
+    require(actual == expected, "unexpected first failure package content")
+    for path in directory.rglob("*"):
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+            require(path.is_file() and not path.is_symlink(), "nonregular first failure package input")
+            require(0 < path.stat().st_size <= FIRST_FAILURE_MAX_IMAGE_BYTES, "first failure package image exceeds bound")
+            from PIL import Image
+            try:
+                with Image.open(path) as image:
+                    receipt = {"screenshot": {"width": image.width, "height": image.height, "bytes": path.stat().st_size}}
+            except (OSError, Image.DecompressionBombError):
+                raise ValueError("first failure package image cannot be decoded") from None
+            validate_first_failure_image(path, receipt)

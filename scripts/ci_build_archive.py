@@ -28,7 +28,7 @@ from run_offline_unit_tests import (CommandError, default_data_available_gib,
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ".github/workflows/ci-gate.yml"
-NIGHTLY_WORKFLOW = ".github/workflows/ci-nightly.yml"
+SMOKE_WORKFLOW = ".github/workflows/ci-smoke-shadow.yml"
 SCHEMES = {"ios": "immichSlides-iOS", "tvos": "immichSlides-tvOS"}
 DESTINATIONS = {"ios": "iOS Simulator", "tvos": "tvOS Simulator"}
 MANIFEST_FIELDS = {"schema_version", "identity", "producer", "platform", "configuration", "architectures",
@@ -341,10 +341,7 @@ def output(key, value):
 
 
 def producer_workflow(identity):
-    if identity['event'] == 'pull_request' and os.environ.get('GITHUB_WORKFLOW_REF', '').partition('@')[0] == (
-            str(identity.get('repository')) + '/' + NIGHTLY_WORKFLOW):
-        return NIGHTLY_WORKFLOW
-    return NIGHTLY_WORKFLOW if identity["event"] in {"schedule", "workflow_dispatch"} else WORKFLOW
+    return SMOKE_WORKFLOW if identity["event"] in {"schedule", "workflow_dispatch"} else WORKFLOW
 
 
 def context(*, require_clean=True):
