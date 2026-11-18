@@ -3,6 +3,7 @@
 
 import XCTest
 import Testing
+import CryptoKit
 @testable import immichSlides
 
 final class AccessProtectionStoreTests: XCTestCase {
@@ -84,7 +85,7 @@ struct AccessProtectionViewModelTests {
         if wasEnabled {
             try viewModel.enableProtection(pin: originalPIN, confirmPin: originalPIN)
         }
-        store.shouldFailWrite = true
+        store.keychain.failingWrites = ["pinRecord", "pinHash", "pinSalt"]
 
         #expect(throws: AccessProtectionError.keychainFailure) {
             if wasEnabled {
@@ -184,24 +185,144 @@ struct AccessProtectionViewModelTests {
     }
 }
 
-// Atomic in-memory writes test coordinator ordering, not the production Keychain transaction.
 @MainActor
-private final class InMemoryAccessProtectionStore: AccessProtectionStoring {
-    var isEnabled = false
-    var shouldFailWrite = false
-    private var savedPIN: String?
-    var hasStoredPIN: Bool { savedPIN != nil }
-    var isRecoveryNeeded: Bool { isEnabled && !hasStoredPIN }
+struct AccessProtectionPersistenceTests {
+    private let originalPIN = String(repeating: "2", count: 6)
+    private let replacementPIN = String(repeating: "3", count: 6)
 
-    func savePIN(_ pin: String) throws {
-        if shouldFailWrite { throw AccessProtectionError.keychainFailure }
-        guard AccessProtectionStore.isValidPinFormat(pin) else { throw AccessProtectionError.invalidPinFormat }
-        savedPIN = pin
+    @Test(arguments: [false, true])
+    func `a failed save keeps the complete previous PIN verifying`(_ usesLegacyFormat: Bool) throws {
+        let fixture = InMemoryAccessProtectionStore()
+        if usesLegacyFormat {
+            fixture.keychain.seedLegacyPIN(originalPIN)
+        } else {
+            try fixture.savePIN(originalPIN)
+        }
+        fixture.isEnabled = true
+        let savedItems = fixture.keychain.items
+        fixture.keychain.failingWrites = ["pinRecord", "pinSalt"]
+
+        #expect(throws: AccessProtectionError.keychainFailure) { try fixture.savePIN(replacementPIN) }
+        #expect(fixture.verifyPIN(originalPIN))
+        #expect(!fixture.verifyPIN(replacementPIN))
+        #expect(!fixture.isRecoveryNeeded)
+        #expect(fixture.keychain.items == savedItems)
     }
 
-    func verifyPIN(_ pin: String) -> Bool { savedPIN == pin }
-    func clearPIN() { savedPIN = nil }
-    func resetProtection() { clearPIN(); isEnabled = false }
+    @Test
+    func `a legacy PIN verifies and migrates only after a successful save`() throws {
+        let fixture = InMemoryAccessProtectionStore()
+        fixture.keychain.seedLegacyPIN(originalPIN)
+        fixture.isEnabled = true
+        #expect(fixture.verifyPIN(originalPIN))
+        #expect(!fixture.isRecoveryNeeded)
+        #expect(fixture.keychain.items["pinRecord"] == nil)
+
+        try fixture.savePIN(replacementPIN)
+
+        #expect(fixture.verifyPIN(replacementPIN))
+        #expect(!fixture.verifyPIN(originalPIN))
+        #expect(Set(fixture.keychain.items.keys) == ["pinRecord"])
+        #expect(!fixture.isRecoveryNeeded)
+    }
+
+    @Test
+    func `a failed legacy cleanup leaves the new PIN authoritative`() throws {
+        let fixture = InMemoryAccessProtectionStore()
+        fixture.keychain.seedLegacyPIN(originalPIN)
+        fixture.keychain.failingDeletes = ["pinHash", "pinSalt"]
+        try fixture.savePIN(replacementPIN)
+
+        #expect(fixture.verifyPIN(replacementPIN))
+        #expect(!fixture.verifyPIN(originalPIN))
+        #expect(fixture.hasStoredPIN)
+        #expect(fixture.keychain.items["pinRecord"] != nil)
+    }
+
+    @Test
+    func `clearing a legacy PIN reaches missing PIN recovery and reset disables it`() {
+        let fixture = InMemoryAccessProtectionStore()
+        fixture.keychain.seedLegacyPIN(originalPIN)
+        fixture.isEnabled = true
+        #expect(!fixture.isRecoveryNeeded)
+        fixture.clearPIN()
+        #expect(!fixture.hasStoredPIN)
+        #expect(!fixture.verifyPIN(originalPIN))
+        #expect(fixture.keychain.items.isEmpty)
+        #expect(fixture.isRecoveryNeeded)
+        fixture.resetProtection()
+        #expect(!fixture.isEnabled)
+        #expect(!fixture.isRecoveryNeeded)
+    }
+
+    @Test(arguments: [nil, Data(), Data([2]) + Data(repeating: 0, count: 48)] as [Data?])
+    func `an unreadable new record requires recovery instead of using stale legacy items`(_ record: Data?) {
+        let fixture = InMemoryAccessProtectionStore()
+        fixture.keychain.seedLegacyPIN(originalPIN)
+        fixture.keychain.items["pinRecord"] = record
+        if record == nil { fixture.keychain.failingReads = ["pinRecord"] }
+        fixture.isEnabled = true
+        #expect(!fixture.hasStoredPIN)
+        #expect(!fixture.verifyPIN(originalPIN))
+        #expect(fixture.isRecoveryNeeded)
+    }
+}
+
+// Per-item failures drive the production persistence logic; real Keychain integration still needs a device.
+@MainActor
+private final class InMemoryAccessProtectionStore: AccessProtectionStoring {
+    let keychain = InMemoryPINKeychain()
+    private let defaultsName = "AccessProtectionStoreTests.\(UUID().uuidString)"
+    private let store: AccessProtectionStore
+
+    init() {
+        store = AccessProtectionStore(defaults: UserDefaults(suiteName: defaultsName)!, keychain: keychain)
+    }
+
+    deinit { UserDefaults.standard.removePersistentDomain(forName: defaultsName) }
+
+    var isEnabled: Bool {
+        get { store.isEnabled }
+        set { store.isEnabled = newValue }
+    }
+    var hasStoredPIN: Bool { store.hasStoredPIN }
+    var isRecoveryNeeded: Bool { store.isRecoveryNeeded }
+
+    func savePIN(_ pin: String) throws {
+        try store.savePIN(pin)
+    }
+
+    func verifyPIN(_ pin: String) -> Bool { store.verifyPIN(pin) }
+    func clearPIN() { store.clearPIN() }
+    func resetProtection() { store.resetProtection() }
+}
+
+private final class InMemoryPINKeychain: AccessProtectionKeychainStoring {
+    var items: [String: Data] = [:]
+    var failingWrites: Set<String> = []
+    var failingDeletes: Set<String> = []
+    var failingReads: Set<String> = []
+
+    func read(account: String) throws -> Data? {
+        if failingReads.contains(account) { throw AccessProtectionError.keychainFailure }
+        return items[account]
+    }
+
+    func write(_ data: Data, account: String) -> Bool {
+        guard !failingWrites.contains(account) else { return false }
+        items[account] = data
+        return true
+    }
+
+    func delete(account: String) {
+        if !failingDeletes.contains(account) { items.removeValue(forKey: account) }
+    }
+
+    func seedLegacyPIN(_ pin: String) {
+        let salt = Data(repeating: 7, count: 16)
+        items["pinHash"] = Data(SHA256.hash(data: Data(pin.utf8) + salt))
+        items["pinSalt"] = salt
+    }
 }
 
 /// Snapshots only the access protection keys; leaves other UserDefaults such as server or filters alone.
