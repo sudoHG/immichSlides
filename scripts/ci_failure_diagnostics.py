@@ -114,10 +114,6 @@ SMOKE_FLOW_FAILURE_MESSAGES = frozenset(
         "required element must be available: ", "required element must be ready: ", "control appears: ",
         "remote focus moves toward ", "remote cannot focus ",
     ) for identifier in SMOKE_FLOW_CONTROL_IDS})
-# Bound to AccessLifecycleContract.hiddenControlStabilitySeconds by the source audit.
-# Retained v1/v2 UI waits keep their original interpretation.
-
-
 def xctest_tool_class(message):
     """Only reviewed complete native messages can bypass the CPU requirement."""
     if not isinstance(message, str) or len(message) > 512:
@@ -659,8 +655,7 @@ def validate_ui_first_failure_images(directory, summary):
     expected = set()
     for index, identity in enumerate(declared):
         entry = observed.get(identity["key"], {})
-        attempts = entry.get("attempts", []) + ([entry["retry_failure"]] if "retry_failure" in entry else [])
-        for attempt in attempts:
+        for attempt in entry.get("attempts", []):
             receipt = attempt.get(FIRST_FAILURE_FIELD)
             if receipt is None or receipt["screenshot"]["status"] != "captured":
                 continue
