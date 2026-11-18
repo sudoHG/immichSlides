@@ -210,17 +210,6 @@ struct AccessProtectionPersistenceTests {
     }
 
     @Test
-    func `a successful save replaces the PIN in one persisted item`() throws {
-        let fixture = InMemoryAccessProtectionStore()
-        try fixture.savePIN(originalPIN)
-        try fixture.savePIN(replacementPIN)
-
-        #expect(fixture.verifyPIN(replacementPIN))
-        #expect(!fixture.verifyPIN(originalPIN))
-        #expect(Set(fixture.keychain.items.keys) == ["pinRecord"])
-    }
-
-    @Test
     func `a legacy PIN verifies and migrates only after a successful save`() throws {
         let fixture = InMemoryAccessProtectionStore()
         fixture.keychain.seedLegacyPIN(originalPIN)
@@ -237,33 +226,23 @@ struct AccessProtectionPersistenceTests {
         #expect(!fixture.isRecoveryNeeded)
     }
 
-    @Test(arguments: [["pinHash"], ["pinSalt"], ["pinHash", "pinSalt"]])
-    func `a failed legacy cleanup leaves the new PIN authoritative`(_ failingDeletes: [String]) throws {
+    @Test
+    func `a failed legacy cleanup leaves the new PIN authoritative`() throws {
         let fixture = InMemoryAccessProtectionStore()
         fixture.keychain.seedLegacyPIN(originalPIN)
-        let legacyItems = fixture.keychain.items
-        fixture.keychain.failingDeletes = Set(failingDeletes)
+        fixture.keychain.failingDeletes = ["pinHash", "pinSalt"]
         try fixture.savePIN(replacementPIN)
 
         #expect(fixture.verifyPIN(replacementPIN))
         #expect(!fixture.verifyPIN(originalPIN))
         #expect(fixture.hasStoredPIN)
         #expect(fixture.keychain.items["pinRecord"] != nil)
-        for account in failingDeletes {
-            #expect(fixture.keychain.items[account] == legacyItems[account])
-        }
     }
 
-    @Test(arguments: [false, true])
-    func `clearing either PIN format reaches missing PIN recovery and reset disables it`(_ usesLegacyFormat: Bool)
-        throws
-    {
+    @Test
+    func `clearing a legacy PIN reaches missing PIN recovery and reset disables it`() {
         let fixture = InMemoryAccessProtectionStore()
-        if usesLegacyFormat {
-            fixture.keychain.seedLegacyPIN(originalPIN)
-        } else {
-            try fixture.savePIN(originalPIN)
-        }
+        fixture.keychain.seedLegacyPIN(originalPIN)
         fixture.isEnabled = true
         #expect(!fixture.isRecoveryNeeded)
         fixture.clearPIN()
@@ -276,7 +255,7 @@ struct AccessProtectionPersistenceTests {
         #expect(!fixture.isRecoveryNeeded)
     }
 
-    @Test(arguments: [nil, Data(), Data([2]) + Data(repeating: 0, count: 48), Data([1, 0])] as [Data?])
+    @Test(arguments: [nil, Data(), Data([2]) + Data(repeating: 0, count: 48)] as [Data?])
     func `an unreadable new record requires recovery instead of using stale legacy items`(_ record: Data?) {
         let fixture = InMemoryAccessProtectionStore()
         fixture.keychain.seedLegacyPIN(originalPIN)

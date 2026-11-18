@@ -141,9 +141,10 @@ final class AccessProtectionStore {
             defaults.removeObject(forKey: uiTestPinSaltKey)
         }
 
-        deleteKeychainData(account: pinRecordAccount)
+        // Remove legacy items first so an interrupted clear cannot revive an obsolete PIN.
         deleteKeychainData(account: pinHashAccount)
         deleteKeychainData(account: pinSaltAccount)
+        deleteKeychainData(account: pinRecordAccount)
     }
 
     // Force-reset access protection so the user cannot be locked out.
