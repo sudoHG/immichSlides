@@ -39,7 +39,7 @@ Agents never approve CI runs, fork commits, CI-changing commits or releases, eve
 These rules exist because past work "passed" while users still saw failures. They are not negotiable.
 
 - What the user sees decides. A visible failure, fallback, blank screen, a single photo padding a multi-photo layout, or a bad crop is a failure, whatever the code path or enum is called.
-- Never improve a metric by redefining success. Do not rename failures, add "safe" categories, change denominators or thresholds, exclude samples, or bypass validators. Metrics may only become stricter, and only with approval.
+- Never improve a metric by redefining success. Do not rename failures, add "safe" categories, change denominators or thresholds, exclude samples, or bypass validators. Changing a metric, threshold or check in either direction needs the maintainer's approval.
 - Do not add or change a visual fallback or presentation mode without explicit approval. This includes blurred or black fills, letterboxing, placeholder collages and single-photo wrappers.
 - A task about photo selection, layout, cropping, candidate search or loading performance must not change rendering, display modes, fallback UI or acceptance criteria unless approved first.
 - Report outcomes exactly. Failed tests are reported with their output. Anything not verified is marked `NOT_RUN`, `BLOCKED_ENV` or `NEEDS_HUMAN_REVIEW`. Never write `PASS` without evidence.
@@ -126,6 +126,15 @@ Formatting is not a matter of taste here: `.swift-format` decides it and `check_
 
 Follow [docs/TESTING.md](docs/TESTING.md). In short: write a test only when it guards a failure that can realistically happen again (section 0), unit tests are named with raw-identifier English sentences, every test has an assertion that can fail, every wait has a deadline, tests skip only when the environment cannot run them, and screenshot or capture tooling lives in the Evidence test plans. Tests must not depend on the simulator language: the test plans run the app in Simplified Chinese, system dialogs are handled in English and Chinese; unit tests compare user-visible text with `String(localized:)`, and UI tests find elements by `accessibilityIdentifier`. `scripts/check_test_conventions.py` enforces what a machine can judge.
 
+## Keep testing proportionate
+
+Tests and CI exist to ship releases safely; they are not the product.
+
+- Test and CI code should shrink over time. A PR that adds lines to `scripts/`, `.github/workflows/` or `immichSlidesUITests/` says why in its description.
+- A new workflow, scheduled job, CI validator or UI test needs the maintainer's approval before you write it. Prefer a unit test against the App's logic.
+- Spend about an hour on a failing or intermittent test. If it fails again without a product cause, delete it or replace it with a unit test. Do not keep it alive with retries, longer waits, "known flaky" or yellow categories, or another validator.
+- Test results serve a release. Do not hold a fix or a release back to make an unrelated test or report green.
+
 ## UI work
 
 - Verify UI changes in the running app. Build and run on a simulator or device, open the changed screen, take a screenshot and look at it. Reading code or an Xcode Preview is not verification.
@@ -187,7 +196,7 @@ Work is done only when all of these hold on the final commit. Earlier runs on ot
 
 ## Keeping these rules useful
 
-When the same mistake shows up twice, do not just fix it again. Propose a rule here or, better, an automated check in `scripts/`, so the next contributor cannot repeat it. Rules that a script can enforce belong in a script.
+When the same mistake shows up twice, do not just fix it again. Fix its cause, or propose a short rule here so the next contributor cannot repeat it. A new automated check counts as test and CI code, so it needs the maintainer's approval (see [Keep testing proportionate](#keep-testing-proportionate)).
 
 ## Reporting back
 
