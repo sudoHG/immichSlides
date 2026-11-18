@@ -65,7 +65,7 @@ class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
         return yaml.load((root / SHADOW).read_text(), Loader=policy.WorkflowLoader)
 
     def violations(self, document, path=SHADOW):
-        return policy.check_workflow(path, yaml.safe_dump(document), run_named_workflows={"ci-nightly"})
+        return policy.check_workflow(path, yaml.safe_dump(document))
 
     def test_shadow_job_timeouts_follow_runner_budgets_with_three_minutes_reserved(self):
         import ci_smoke_shadow as shadow
@@ -243,6 +243,41 @@ class WorkflowPolicyTests(unittest.TestCase):
         document["jobs"]["other"] = copy.deepcopy(document["jobs"]["check"])
         del document["jobs"]["other"]["permissions"]
         self.assertIn("permissions", self.rules(document))
+        document = workflow()
+        document["jobs"]["check"]["permissions"] = {"issues": "write"}
+        self.assertIn("write-permission", self.rules(document))
+
+    def test_protected_environments_are_bound_to_named_workflows(self):
+        for name in ("ci-publisher", "immich-test-server"):
+            with self.subTest(environment=name):
+                document = workflow()
+                document["jobs"]["check"]["environment"] = name
+                self.assertIn("environment", self.rules(document, ".github/workflows/ci-gate.yml"))
+
+    def test_retained_workflows_cannot_read_secrets(self):
+        cases = (
+            ("job", "env", {"CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}),
+            ("step", "env", {"CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}),
+            ("step", "run", "echo '${{ secrets.IMMICH_TEST_SERVER_URL }}'"),
+            ("step", "with", {"ref": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}),
+            ("step", "env", {"OTHER": "${{ secrets['IMMICH_TEST_SERVER_URL'] }}"}),
+            ("step", "env", {"OTHER": "${{ toJSON(secrets) }}"}),
+            ("step", "env", {"OTHER": "${{ secrets[format('IMMICH_{0}', 'TEST_SERVER_URL')] }}"}),
+            ("step", "env", {"OTHER": "${{ secrets.immich_test_server_url }}"}),
+            ("step", "env", {"OTHER": "${{ toJSON(SeCrEtS) }}"}),
+            ("job", "env", {"OTHER": "${{ secrets.UNRELATED }}"}),
+            ("workflow", "env", {"OTHER": "${{ toJSON(secrets) }}"}),
+            ("step", "env", {"if": "'${{ toJSON(secrets) }}'"}),
+            ("step", "if", "secrets.OTHER != ''"),
+            ("step", "env", {"CI_LIVE_URL": "${{ toJSON(secrets) }}"}),
+        )
+        for scope, field, value in cases:
+            with self.subTest(scope=scope, field=field, value=value):
+                document = workflow()
+                job = document["jobs"]["check"]
+                target = {"workflow": document, "job": job, "step": job["steps"][0]}[scope]
+                target[field] = value
+                self.assertIn("credential", self.rules(document))
 
     def test_each_job_needs_a_bounded_literal_timeout(self):
         for value in [None, 0, -1, 361, True, "5", "${{ inputs.timeout }}", "${{ matrix.timeout_minutes }}"]:
@@ -255,23 +290,6 @@ class WorkflowPolicyTests(unittest.TestCase):
         document = workflow()
         document["jobs"]["other"] = {"runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}
         self.assertIn("timeout", self.rules(document))
-
-
-    def probe(self):
-        document = self.trusted()
-        document["name"] = "ci-probe"
-        document["on"] = {"schedule": [{"cron": "17 8 * * *"}], "workflow_dispatch": None}
-        document["permissions"] = {}
-        document["jobs"]["check"]["permissions"] = {"contents": "read", "issues": "write"}
-        document["jobs"]["check"]["steps"].extend([
-            {"run": '/usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"'},
-            {"run": "/usr/bin/python3 scripts/probe_ci_toolchain.py", "env": {
-                "CI_PROBE_TOKEN": "${{ github.token }}",
-                "CI_PROBE_SIMULATE_MISSING_PIN": "${{ inputs.simulate_missing_pin || false }}",
-            }},
-        ])
-        return document
-
 
     def test_privileged_triggers_use_exact_paths_in_all_yaml_forms(self):
         for event in ["pull_request_target", ["pull_request_target"], {"pull_request_target": None}]:

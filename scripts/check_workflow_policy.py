@@ -407,7 +407,7 @@ def check_shadow_contract(document, events, flag):
         flag("workflow", "smoke-shadow-contract", "Smoke keeps main-only scheduled/manual admission, manifest groups, read-only authority and a 70-minute execution budget")
 
 
-def check_workflow(path: str, source: str, *, run_named_workflows=()) -> list[Violation]:
+def check_workflow(path: str, source: str) -> list[Violation]:
     violations = []
 
     def flag(location, rule, message):
@@ -459,12 +459,6 @@ def check_workflow(path: str, source: str, *, run_named_workflows=()) -> list[Vi
         if any(names_secrets_root(code) for code in expression_code(location, value,
                 implicit_expression_locations(jobs), keep_index_literals=True)):
             flag(location, "credential", "Retained workflows cannot read repository secrets")
-    for location, item in walk_mappings(document):
-        name = item.get("environment")
-        name = name.get("name") if isinstance(name, dict) else name
-        if isinstance(name, str) and '${{' in name:
-            flag(location, 'live-credential', 'Environment names must be literal to verify credential isolation')
-        env = item.get("env", {})
     implicit_locations = implicit_expression_locations(jobs)
     trusted = path in TRUSTED_WORKFLOWS or bool({"pull_request_target", "workflow_run"} & set(events))
     for job_id, job in jobs.items():
@@ -486,11 +480,7 @@ def check_workflow(path: str, source: str, *, run_named_workflows=()) -> list[Vi
         if not shadow_matrix_timeout and (type(timeout) is not int or not 1 <= timeout <= 360):
             flag(location, "timeout", "Job needs a literal timeout-minutes from 1 to 360")
         if "environment" in job:
-            environment = job["environment"]
-            name = environment.get("name") if isinstance(environment, dict) else environment
-            if (not isinstance(name, str) or "${{" in name
-                    or path in TRUSTED_WORKFLOWS):
-                flag(location, "environment", "Protected environments are bound to named workflows; names must be literal")
+            flag(location, "environment", "Retained workflows cannot declare job environments")
         steps = job.get("steps")
         if "uses" not in job and (not isinstance(steps, list) or not steps):
             flag(location, "workflow-format", "Expected steps or a pinned reusable workflow")
@@ -595,7 +585,6 @@ def main(argv=None):
     except (OSError, UnicodeError, ValueError) as error:
         violations.append(Violation("scripts/run_host_checks.py", "inventory", "macos-python-tests", str(error)))
     workflow_sources = {}
-    run_named_workflows = set()
     for path in paths:
         relative = path.relative_to(args.root).as_posix()
         try:
@@ -603,15 +592,10 @@ def main(argv=None):
                 raise ValueError("Workflow symlinks are unsupported")
             source = path.read_text(encoding="utf-8")
             workflow_sources[relative] = source
-            document = yaml.load(source, Loader=WorkflowLoader)
-            if isinstance(document, dict) and "run-name" in document and isinstance(document.get("name"), str):
-                run_named_workflows.add(document["name"])
-        except (yaml.YAMLError, RecursionError):
-            pass  # The per-workflow checker reports malformed YAML, including duplicate keys and aliases.
         except (OSError, UnicodeError, ValueError):
             violations.append(Violation(relative, "workflow", "workflow-format", "Cannot read a regular UTF-8 workflow"))
     for relative, source in workflow_sources.items():
-        violations.extend(check_workflow(relative, source, run_named_workflows=run_named_workflows))
+        violations.extend(check_workflow(relative, source))
     for violation in violations:
         print(violation, file=sys.stderr)
     print(f"Workflow policy {'FAIL' if violations else 'PASS'}: {len(paths)} workflows, {len(violations)} violations")

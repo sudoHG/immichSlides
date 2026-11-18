@@ -136,12 +136,12 @@ def validate_exclusions(flows, methods, plans):
         smoke = {flow["selector"] for flow in flows if flow["platform"] == platform}
         for name, plan in plans[platform].items():
             for target in plan.get("testTargets", []):
-                if target.get("target", {}).get("name") != "immichSlidesUITests" or target.get("skipped") is True:
+                if target.get("target", {}).get("name") != "immichSlidesUITests" or target.get("enabled", True) is False:
                     continue
                 selected, skipped = target.get("selectedTests"), target.get("skippedTests", [])
                 def includes(selector, entries):
                     return any(entry.removesuffix("()") in {selector, selector.partition("/")[0]} for entry in entries)
-                leaked = [selector for selector in smoke if (selected is None or includes(selector, selected))
+                leaked = [selector for selector in smoke if (not selected or includes(selector, selected))
                           and not includes(selector, skipped)]
                 if leaked:
                     raise ValueError(f"smoke-manifest-exclusion: {name} includes {sorted(leaked)!r}")

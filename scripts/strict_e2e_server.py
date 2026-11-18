@@ -7,23 +7,6 @@ import sys
 import time
 
 _IMPORT_STARTED = time.monotonic()
-def write_member_manifest(path: Path, fixture_set: str) -> dict:
-    """Write the frozen public album metadata consumed by the short smoke flow."""
-    fixture = fixture_manifest(fixture_set)
-    frozen_hashes = {
-        "a": "44f9dc4b144e5fcc5dd14a98b76ba1bf1ca8829648555aebe738c3e2b3048989",
-        "b": "9a0c084f5f6d5ed05186a47130a4ebbf7e1635d08374e26db9e822442cc5162a",
-    }
-    if fixture["fixture_sha256"] != frozen_hashes[fixture_set]:
-        raise ValueError("fixture hash has drifted from the frozen contract")
-    target = next(album for album in fixture["albums"] if album["fixture_role"] == "target")
-    payload = {"schema_version": 1, "fixture_set": fixture_set,
-               "fixture_sha256": fixture["fixture_sha256"], "target_album": {"id": target["id"]}}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return payload
-
-
 if __name__ == "__main__":
     print("fixture-startup: phase=import; state=started; elapsed=0.000s; total=0.000s", flush=True)
 
@@ -45,6 +28,23 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, BinaryIO, Callable
 from urllib.parse import parse_qs, urlparse
+
+
+def write_member_manifest(path: Path, fixture_set: str) -> dict:
+    """Write the frozen public album metadata consumed by the short smoke flow."""
+    fixture = fixture_manifest(fixture_set)
+    frozen_hashes = {
+        "a": "44f9dc4b144e5fcc5dd14a98b76ba1bf1ca8829648555aebe738c3e2b3048989",
+        "b": "9a0c084f5f6d5ed05186a47130a4ebbf7e1635d08374e26db9e822442cc5162a",
+    }
+    if fixture["fixture_sha256"] != frozen_hashes[fixture_set]:
+        raise ValueError("fixture hash has drifted from the frozen contract")
+    target = next(album for album in fixture["albums"] if album["fixture_role"] == "target")
+    payload = {"schema_version": 1, "fixture_set": fixture_set,
+               "fixture_sha256": fixture["fixture_sha256"], "target_album": {"id": target["id"]}}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return payload
 
 
 PUBLIC_API_KEY = "immichslides-public-e2e-key"

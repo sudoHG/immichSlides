@@ -1027,9 +1027,14 @@ class SmokeManifestTests(unittest.TestCase):
                                                  ("Evidence", {"selectedTests": ["AppStoreScreenshotUITests"]}))}
                  for platform in ("ios", "tvos")}
         validate_exclusions(flows, methods, plans)
+        disabled = copy.deepcopy(plans)
+        for platform in disabled:
+            for plan in disabled[platform].values():
+                plan["testTargets"][0].update(enabled=False, selectedTests=[], skippedTests=[])
+        validate_exclusions(flows, methods, disabled)
         for platform in plans:
             for name in plans[platform]:
-                for use_class in (True, False):
+                for use_class in (True, False, None):
                     with self.subTest(platform=platform, plan=name, use_class=use_class):
                         changed = copy.deepcopy(plans)
                         target = changed[platform][name]["testTargets"][0]
@@ -1037,7 +1042,8 @@ class SmokeManifestTests(unittest.TestCase):
                             target["skippedTests"] = []
                         else:
                             selector = next(flow["selector"] for flow in flows if flow["platform"] == platform)
-                            target["selectedTests"] = [selector.split("/")[0] if use_class else selector + "()"]
+                            target["selectedTests"] = ([] if use_class is None else
+                                                       [selector.split("/")[0] if use_class else selector + "()"])
                         with self.assertRaisesRegex(ValueError, "smoke-manifest-exclusion"):
                             validate_exclusions(flows, methods, changed)
 

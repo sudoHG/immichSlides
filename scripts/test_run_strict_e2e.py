@@ -900,13 +900,13 @@ raise SystemExit(65)
         with tempfile.TemporaryDirectory() as raw:
             evidence = Path(raw)
             (evidence / "official-summary.json").write_text(json.dumps(good))
-            self.assertEqual(read_case_official(evidence, "smoke"), good)
+            self.assertEqual(read_case_official(evidence), good)
             for counts in (dict(good, totalTestCount=True), dict(good, failedTests=-1),
                            dict(good, totalTestCount=2), dict(good, result="Passed")):
                 with self.subTest(counts=counts):
                     (evidence / "official-summary.json").write_text(json.dumps(counts))
                     with self.assertRaises(ValueError):
-                        read_case_official(evidence, "smoke")
+                        read_case_official(evidence)
 
 
     def test_runner_escalates_late_survivors_in_its_own_group_and_verifies_their_exit(self):

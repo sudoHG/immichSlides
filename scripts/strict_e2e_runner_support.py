@@ -938,7 +938,7 @@ def runner_group_members(group_id):
         print("Runner member probe unavailable: " + type(error).__name__, file=sys.stderr, flush=True)
         return None, False
 
-def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen=None, failure_report=None, environment=None):
+def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen=None, environment=None):
     with log_path.open("a+") as log:
         offset = log.tell()
         process = subprocess.Popen(command, cwd=repo_root, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,

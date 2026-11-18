@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -17,16 +18,15 @@ import sys
 import time
 import tarfile
 from pathlib import Path
+import zipfile
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 # The trusted entry point is staged outside the checkout before selecting a historical main SHA.
 ROOT = Path(os.environ.get("GITHUB_WORKSPACE") or Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(ROOT / "scripts"))
 from ci_summary import ContractError, decode, markdown_text, require, sha
-import re
-import zipfile
-from urllib.error import HTTPError
-from urllib.parse import urlencode
-from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 WORKFLOW = ".github/workflows/ci-smoke-shadow.yml"
 MANIFEST = "scripts/smoke-flows.json"
@@ -974,7 +974,7 @@ def read_runner_flows(evidence, scheduling, selected, destination, *, validation
             require(per_flow.get("official_tests_sha256") == result.get("official_tests_sha256") == file_hash(tests_path),
                     "flow official hash differs")
             tests = decode(tests_path.read_text())
-            official = read_case_official(directory, "smoke-flow")
+            official = read_case_official(directory)
             require(official is not None and per_flow.get("official_summary") == result.get("official_summary") == official,
                     "flow official summary differs")
             facts = official_tests_facts(tests)["test_cases"]
@@ -1511,7 +1511,7 @@ def official_tests_facts(payload: dict) -> dict:
     devices = payload.get("devices")
     return {"test_cases": test_cases, "devices": devices if isinstance(devices, list) else []}
 
-def read_case_official(evidence, suite):
+def read_case_official(evidence):
     """Read exported results after finalization, including nonzero runner exits."""
     def read(path):
         payload = decode(path.read_text())

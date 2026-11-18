@@ -343,9 +343,6 @@ def validate_first_failure(receipt):
         require(value is None or (type(value) in ((int,) if integral else (int, float))
                 and minimum <= value <= maximum and math.isfinite(value)), where + ": invalid number")
     fields = {"schema_version", "source", "step", "element", "action", "timing", "state", "validator", "screenshot"}
-    for optional in ():
-        if isinstance(receipt, dict) and optional in receipt:
-            fields.add(optional)
     exact(receipt, fields, "first failure")
     require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1, "first failure: unsupported version")
     choice(receipt["source"], ("xctest", "preparation"), "source")

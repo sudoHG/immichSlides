@@ -28,7 +28,6 @@ from run_offline_unit_tests import (CommandError, default_data_available_gib,
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ".github/workflows/ci-gate.yml"
-SMOKE_WORKFLOW = ".github/workflows/ci-smoke-shadow.yml"
 SCHEMES = {"ios": "immichSlides-iOS", "tvos": "immichSlides-tvOS"}
 DESTINATIONS = {"ios": "iOS Simulator", "tvos": "tvOS Simulator"}
 MANIFEST_FIELDS = {"schema_version", "identity", "producer", "platform", "configuration", "architectures",
@@ -341,13 +340,13 @@ def output(key, value):
 
 
 def producer_workflow(identity):
-    return SMOKE_WORKFLOW if identity["event"] in {"schedule", "workflow_dispatch"} else WORKFLOW
+    return WORKFLOW
 
 
 def context(*, require_clean=True):
     ci = os.environ.get("GITHUB_ACTIONS") == "true"
     identity = run_identity(os.environ, ci=ci)
-    require(identity["event"] in {"pull_request", "push", "local", "schedule", "workflow_dispatch"}, "unsupported archive event")
+    require(identity["event"] in {"pull_request", "push", "local"}, "unsupported archive event")
     if require_clean:
         require(identity.get("dirty") is not True, "build archives require a clean committed tree")
     workflow, fork = source_metadata(identity, os.environ, producer_workflow(identity) if ci else None)
