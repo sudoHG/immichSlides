@@ -29,11 +29,19 @@ enum AccessProtectionError: LocalizedError {
     }
 }
 
+protocol AccessProtectionKeychainStoring: AnyObject {
+    func read(account: String) throws -> Data?
+    func write(_ data: Data, account: String) -> Bool
+    func delete(account: String)
+}
+
 final class AccessProtectionStore {
     static let shared = AccessProtectionStore()
     private static let saltLengthBytes: Int = 16
+    private static let pinRecordVersion: UInt8 = 1
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+    private let keychain: (any AccessProtectionKeychainStoring)?
     private let enabledKey = "accessProtection.isEnabled"
     private let uiTestPINStorageEnabledKey = "accessProtection.uiTest.storageEnabled"
     private let uiTestPinHashKey = "accessProtection.uiTest.pinHash"
@@ -42,8 +50,17 @@ final class AccessProtectionStore {
     private let keychainService = "immichSlides.accessProtection"
     private let pinHashAccount = "pinHash"
     private let pinSaltAccount = "pinSalt"
+    private let pinRecordAccount = "pinRecord"
 
-    private init() {}
+    private init() {
+        defaults = .standard
+        keychain = nil
+    }
+
+    init(defaults: UserDefaults, keychain: any AccessProtectionKeychainStoring) {
+        self.defaults = defaults
+        self.keychain = keychain
+    }
 
     var isEnabled: Bool {
         get { defaults.bool(forKey: enabledKey) }
@@ -58,7 +75,7 @@ final class AccessProtectionStore {
             return uiTestPINData(forKey: uiTestPinHashKey) != nil && uiTestPINData(forKey: uiTestPinSaltKey) != nil
         }
 
-        return (readKeychainData(account: pinHashAccount) != nil) && (readKeychainData(account: pinSaltAccount) != nil)
+        return storedPIN() != nil
     }
 
     // Fallback recovery check: the logical switch says "enabled" but the key material is missing (for example,
@@ -87,11 +104,13 @@ final class AccessProtectionStore {
             return
         }
 
-        guard writeKeychainData(hash, account: pinHashAccount),
-            writeKeychainData(salt, account: pinSaltAccount)
-        else {
+        let record = Data([Self.pinRecordVersion]) + salt + hash
+        guard writeKeychainData(record, account: pinRecordAccount) else {
             throw AccessProtectionError.keychainFailure
         }
+        // The committed record wins even if legacy cleanup fails.
+        deleteKeychainData(account: pinHashAccount)
+        deleteKeychainData(account: pinSaltAccount)
     }
 
     func verifyPIN(_ pin: String) -> Bool {
@@ -107,13 +126,12 @@ final class AccessProtectionStore {
         }
 
         guard Self.isValidPinFormat(pin),
-            let savedHash = readKeychainData(account: pinHashAccount),
-            let savedSalt = readKeychainData(account: pinSaltAccount)
+            let savedPIN = storedPIN()
         else {
             return false
         }
 
-        return makeHash(pin: pin, salt: savedSalt) == savedHash
+        return makeHash(pin: pin, salt: savedPIN.salt) == savedPIN.hash
     }
 
     func clearPIN() {
@@ -123,6 +141,7 @@ final class AccessProtectionStore {
             defaults.removeObject(forKey: uiTestPinSaltKey)
         }
 
+        deleteKeychainData(account: pinRecordAccount)
         deleteKeychainData(account: pinHashAccount)
         deleteKeychainData(account: pinSaltAccount)
     }
@@ -139,7 +158,27 @@ final class AccessProtectionStore {
         return Data(SHA256.hash(data: input))
     }
 
+    private func storedPIN() -> (hash: Data, salt: Data)? {
+        do {
+            if let record = try readKeychainData(account: pinRecordAccount) {
+                guard record.count == 1 + Self.saltLengthBytes + SHA256.byteCount,
+                    record.first == Self.pinRecordVersion
+                else { return nil }
+                return (Data(record.suffix(SHA256.byteCount)), Data(record.dropFirst().prefix(Self.saltLengthBytes)))
+            }
+            guard let hash = try readKeychainData(account: pinHashAccount),
+                let salt = try readKeychainData(account: pinSaltAccount)
+            else { return nil }
+            return (hash, salt)
+        } catch {
+            // Only an absent record permits legacy lookup; unreadable material needs recovery.
+            return nil
+        }
+    }
+
     private var shouldUseUITestPINStorage: Bool {
+        // An explicitly supplied backend must exercise the same persistence path as the Keychain.
+        guard keychain == nil else { return false }
         #if DEBUG
         let env = ProcessInfo.processInfo.environment
         // launchEnvironment may be gone after a relaunch, so detect test storage via the XCTest path and the Debug
@@ -169,6 +208,7 @@ final class AccessProtectionStore {
     }
 
     private func writeKeychainData(_ data: Data, account: String) -> Bool {
+        if let keychain { return keychain.write(data, account: account) }
         let lookupQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -181,25 +221,25 @@ final class AccessProtectionStore {
             kSecValueData as String: data
         ]
 
-        // Delete with the identity query only; if Add hits a duplicate, Update instead, to avoid leftovers on the
-        // simulator.
-        SecItemDelete(lookupQuery as CFDictionary)
+        let update = [kSecValueData as String: data]
+        // Updating one item preserves its previous value on failure; never delete before replacing it.
+        let updateStatus = SecItemUpdate(lookupQuery as CFDictionary, update as CFDictionary)
+        if updateStatus == errSecSuccess { return true }
+        guard updateStatus == errSecItemNotFound else { return false }
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         if status == errSecSuccess {
             return true
         }
 
         if status == errSecDuplicateItem {
-            let update: [String: Any] = [
-                kSecValueData as String: data
-            ]
             return SecItemUpdate(lookupQuery as CFDictionary, update as CFDictionary) == errSecSuccess
         }
 
         return false
     }
 
-    private func readKeychainData(account: String) -> Data? {
+    private func readKeychainData(account: String) throws -> Data? {
+        if let keychain { return try keychain.read(account: account) }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -210,11 +250,18 @@ final class AccessProtectionStore {
 
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess else { return nil }
-        return result as? Data
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw AccessProtectionError.keychainFailure
+        }
+        return data
     }
 
     private func deleteKeychainData(account: String) {
+        if let keychain {
+            keychain.delete(account: account)
+            return
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
