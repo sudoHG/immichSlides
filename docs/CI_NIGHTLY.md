@@ -48,6 +48,7 @@ equality fail. This run cannot substitute for a complete nightly, and does not r
 ## Standalone smoke nightly
 
 `ci-smoke-shadow` runs daily at `7 14 * * *` (14:07 UTC / 22:07 Beijing),
+with `7 19 * * *` (19:07 UTC / 03:07 Beijing the next day) as a backup,
 on `main` only, testing the run's `github.sha`. It has no dependency on
 `ci-nightly`. Its results are informational and never block merges.
 
@@ -55,7 +56,7 @@ Scheduled runs use `core`: exactly `tv-first-boot`, `tv-playback-controls`,
 `tv-pause-resume`, `tv-background-return`, `tv-server-switch`,
 `iphone-first-boot` and `ipad-rotation`. The core set lives beside the flow
 method definitions in `scripts/strict_e2e_smoke.py`. Manual dispatch accepts
-`scope=core` (default) or `scope=full`; full runs all 23 flows in
+`scope=core` or `scope=full` (default); full runs all 23 flows in
 `scripts/ci-test-tiers.json` through the validated `scripts/smoke-flows.json`.
 Only groups containing selected flows start jobs. iOS configurations build their
 own archives; tvOS groups build locally. No legacy nightly artifacts are used.
@@ -63,8 +64,10 @@ own archives; tvOS groups build locally. No legacy nightly artifacts are used.
 A scheduled run skips every group when an earlier smoke run on this repository
 already tested the same head: its selected flows have official first results and
 its groups completed without being skipped or cancelled. The planner reads smoke
-history with `actions: read`; missing or unreadable evidence cannot authorize a
-skip. The aggregate reports the skip in one line. Manual dispatch always runs.
+history with `actions: read`. Any exception while reading history means not tested;
+the run executes. The aggregate reports a skip in one line with a link to the
+earlier run, its attempt and its outcome, including a prior failure. Manual dispatch
+always runs. The same-head skip also prevents duplicate execution at the backup time.
 
 The aggregate is red when any selected flow fails or lacks a first result,
 and green when every selected flow passes with valid source and official evidence.
@@ -77,7 +80,7 @@ gh workflow run ci-smoke-shadow.yml --ref main -f scope=full
 ```
 
 Hosted behavior is `NOT_RUN` until the first scheduled or dispatched run after
-merge: both triggers read this workflow from `main`, so this PR runs no smoke jobs.
+merge: both triggers read this workflow from `main`.
 
 ## Early failure diagnostics
 

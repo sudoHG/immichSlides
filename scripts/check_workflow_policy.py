@@ -33,7 +33,8 @@ SHADOW_PLAN_GUARD = ("github.ref == 'refs/heads/main' && "
     "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')")
 SHADOW_CONCURRENCY_GROUP = ("${{ (" + SHADOW_PLAN_GUARD + ") && "
     "'ci-smoke-shadow' || format('ci-smoke-shadow-rejected-{0}', github.run_id) }}")
-SHADOW_BINDINGS = {"SMOKE_SCOPE": "${{ inputs.scope || 'core' }}", "SMOKE_TOKEN": "${{ github.token }}",
+SHADOW_BINDINGS = {"SMOKE_SCOPE": "${{ github.event_name == 'workflow_dispatch' && (inputs.scope || 'full') || 'core' }}",
+                   "SMOKE_TOKEN": "${{ github.token }}",
                    "SMOKE_GROUP": "${{ matrix.id }}", "SMOKE_MATRIX_RESULT": "${{ needs.flows.result }}"}
 SHADOW_CONFIGURATION = "${{ github.job == 'ios-debug' && 'Debug' || 'Release' }}"
 SHADOW_BINDINGS.update(SMOKE_CONFIGURATION=SHADOW_CONFIGURATION, SMOKE_ARTIFACT_ID="${{ steps.archive.outputs.artifact-id }}")
@@ -585,9 +586,9 @@ def check_shared_shadow_contract(document, events, flag):
 def check_shadow_contract(document, events, flag):
     if any(role in document["jobs"] for role in ("ios-debug", "ios-release")):
         return check_shared_shadow_contract(document, events, flag)
-    expected_events = {"schedule": [{"cron": "7 14 * * *"}],
+    expected_events = {"schedule": [{"cron": "7 14 * * *"}, {"cron": "7 19 * * *"}],
         "workflow_dispatch": {"inputs": {"scope": {"description": "Smoke flow scope", "required": True,
-            "default": "core", "type": "choice", "options": ["core", "full"]}}}}
+            "default": "full", "type": "choice", "options": ["core", "full"]}}}}
     jobs = document["jobs"]
     concurrency = document.get("concurrency", {})
     valid = (document.get("name") == "ci-smoke-shadow" and events == expected_events

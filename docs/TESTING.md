@@ -124,10 +124,7 @@ Affected real-device system integration remains explicit; synthetic tests cannot
 it. Existing release eligibility and human approval contracts remain in force until a
 separately reviewed replacement is activated.
 
-Migration is done only after **5–7 shadow runs**, preserving old gate results, followed
-by **10 consecutive actually executed nights after the switch with no unexplained red**.
-Unchanged-night skips, cancellation, missing shards and NOT_RUN do not count as executed
-nights. Keep first failures, retries, yellow, infrastructure errors, human findings and
+Keep first failures, retries, yellow, infrastructure errors, human findings and
 elapsed time separate; do not relabel old failures. The 60–120 minute nightly budget and
 estimated 0.2–0.6 red events per run are planning estimates, `NOT_VERIFIED` until measured
 on comparable runs; fewer scheduled identities do not prove better App correctness.

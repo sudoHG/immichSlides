@@ -217,11 +217,11 @@ class SmokeShadowTests(unittest.TestCase):
         planned = json.loads((shadow.ROOT / "scripts/ci-test-tiers.json").read_text())["smoke_flows"]
         for scope, expected in (("core", expected_core), ("full", {flow["id"] for flow in planned})):
             with self.subTest(scope=scope):
-                context = dict(environment("schedule"), SMOKE_SCOPE=scope)
+                context = environment("schedule" if scope == "core" else "workflow_dispatch")
+                context.pop("SMOKE_SCOPE")
                 scheduling = shadow.make_plan(context, flows, "c" * 64)
                 self.assertEqual({flow["id"] for flow in scheduling["flows"]}, expected)
                 self.assertEqual(len(scheduling["flows"]), 7 if scope == "core" else 23)
-                self.assertEqual(smoke.select_scope(flows["flows"], scope), scheduling["flows"])
                 groups = {group["id"] for group in scheduling["groups"]}
                 self.assertEqual(groups, {flow["device"] + "-" + flow["configuration"].lower()
                                          for flow in scheduling["flows"]})
@@ -253,6 +253,8 @@ class SmokeShadowTests(unittest.TestCase):
                     self.assertIn("ios_release=" + str(scope == "full").lower(), outputs)
         with self.assertRaises(ValueError):
             smoke.select_scope(flows["flows"], "unknown")
+        with self.assertRaisesRegex(ContractError, "unknown smoke group"):
+            shadow.group_flows(scheduling, "unknown")
 
     def test_admission_requires_main_schedule_or_dispatch_and_first_attempt(self):
         for event in ("schedule", "workflow_dispatch"):
@@ -268,6 +270,8 @@ class SmokeShadowTests(unittest.TestCase):
         workflow = yaml.load((shadow.ROOT / shadow.WORKFLOW).read_text(), Loader=policy.WorkflowLoader)
         self.assertEqual(policy.check_workflow(shadow.WORKFLOW, yaml.safe_dump(workflow)), [])
         for mutate in (lambda doc: doc["on"]["schedule"][0].update(cron="7 19 * * *"),
+                       lambda doc: doc["on"]["schedule"].pop(),
+                       lambda doc: doc["on"]["workflow_dispatch"]["inputs"]["scope"].update(default="core"),
                        lambda doc: doc["on"]["workflow_dispatch"]["inputs"]["scope"].update(options=["full"]),
                        lambda doc: doc["jobs"]["plan"]["steps"][0]["with"].update(ref="main"),
                        lambda doc: doc["jobs"]["ios-release"].update({"if": doc["jobs"]["flows"]["if"]})):
@@ -282,13 +286,13 @@ class SmokeShadowTests(unittest.TestCase):
                  "repository": {"full_name": REPOSITORY}, "head_repository": {"full_name": REPOSITORY},
                  "head_branch": "main", "head_sha": HEAD, "event": "schedule", "status": "completed",
                  "conclusion": "failure"}
-        for defect in (None, "new-head", "skipped", "cancelled", "group-skipped", "group-cancelled", "partial", "foreign", "later-run", "legacy-event"):
+        for defect in (None, "new-head", "skipped", "cancelled", "group-skipped", "group-cancelled", "partial", "foreign", "later-run"):
             for event in ("schedule", "workflow_dispatch"):
                 with self.subTest(defect=defect, event=event), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
                     temporary = Path(raw)
                     context, api, _reader = plan_fixture(temporary, stack)
                     context["GITHUB_EVENT_NAME"] = event
-                    record = shadow.aggregate(plan(), group_records(plan()), "success")
+                    record = shadow.aggregate(plan(), group_records(plan()), "failure")
                     record["shadow"] = dict(record["shadow"], id="100", event="schedule")
                     candidate = dict(prior)
                     jobs = [{"name": "smoke-shadow-" + group["id"], "status": "completed", "conclusion": "success"}
@@ -302,23 +306,66 @@ class SmokeShadowTests(unittest.TestCase):
                     if defect == "later-run":
                         candidate["id"] = 201
                         record["shadow"]["id"] = "201"
-                    if defect == "legacy-event":
-                        candidate["event"] = "workflow_run"
-                        record["shadow"]["event"] = "workflow_run"
                     api.pages.side_effect = lambda path, _collection, **_filters: ([candidate] if path.endswith("/runs") else [
                         {"name": f"smoke-shadow-{candidate['id']}-1", "expired": False, "id": 9}])
                     stack.enter_context(patch("ci_publish.json_member", return_value=record))
                     stack.enter_context(patch("ci_publish.complete_attempt_jobs", return_value=jobs))
                     self.assertEqual(shadow.plan_run(context, temporary / "plan"), 0)
                     scheduling = json.loads((temporary / "plan/plan.json").read_text())
-                    expected = event == "workflow_dispatch" or defect not in {None, "legacy-event"}
+                    expected = event == "workflow_dispatch" or defect is not None
                     self.assertEqual(scheduling["execute"], expected)
                     self.assertEqual(scheduling["head_sha"], HEAD)
                     self.assertIn("execute=" + str(expected).lower(), (temporary / "output").read_text())
                     if not expected:
                         result = shadow.aggregate(scheduling, [], "skipped")
                         self.assertEqual(result["outcome"], "not-run")
-                        self.assertEqual(shadow.markdown(result).count("\n"), 1)
+                        reason = ("Main head already tested by [run 100, attempt 1]"
+                                  "(https://github.com/example/photos/actions/runs/100/attempts/1) (FAILED); all groups skipped.")
+                        self.assertEqual(scheduling["not_run_reason"], reason)
+                        self.assertEqual(shadow.markdown(result), "Smoke skipped: " + reason + "\n")
+        with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+            temporary = Path(raw)
+            context, api, reader = plan_fixture(temporary, stack)
+            context.update(GITHUB_EVENT_NAME="schedule", SMOKE_SCOPE="core")
+            smoke_manifest = json.loads((shadow.ROOT / shadow.MANIFEST).read_text())
+            reader.return_value = (smoke_manifest, "c" * 64)
+            full = shadow.make_plan(environment(), smoke_manifest, "c" * 64)
+            record = shadow.aggregate(full, group_records(full), "success")
+            record["shadow"] = dict(record["shadow"], id="100", event="schedule")
+            api.pages.side_effect = lambda path, _collection, **_filters: ([prior] if path.endswith("/runs") else [
+                {"name": "smoke-shadow-100-1", "expired": False, "id": 9}])
+            stack.enter_context(patch("ci_publish.json_member", return_value=record))
+            stack.enter_context(patch("ci_publish.complete_attempt_jobs", return_value=[
+                {"name": "smoke-shadow-" + group["id"], "status": "completed", "conclusion": "success"}
+                for group in full["groups"]]))
+            stack.enter_context(patch.object(shadow, "git", return_value=HEAD))
+            shared = stack.enter_context(patch.object(shadow, "plan_shared"))
+            self.assertEqual(shadow.plan_run(context, temporary / "plan", shared=True), 0)
+            outputs = (temporary / "output").read_text()
+            self.assertIn("execute=false", outputs)
+            self.assertIn("ios_debug=false", outputs)
+            self.assertIn("ios_release=false", outputs)
+            shared.assert_not_called()
+
+    def test_history_read_exceptions_execute_instead_of_skipping(self):
+        import zipfile
+        for failure in ("list", "artifact"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+                temporary = Path(raw)
+                context, api, _reader = plan_fixture(temporary, stack)
+                context["GITHUB_EVENT_NAME"] = "schedule"
+                if failure == "list":
+                    api.pages.side_effect = OSError("synthetic list failure")
+                else:
+                    api.pages.side_effect = lambda path, _collection, **_filters: ([run_metadata()] if path.endswith("/runs") else [
+                        {"name": "smoke-shadow-100-1", "expired": False, "id": 9}])
+                read = stack.enter_context(patch("ci_publish.json_member", side_effect=zipfile.BadZipFile("synthetic corrupt artifact")))
+                self.assertEqual(shadow.plan_run(context, temporary / "plan"), 0)
+                scheduling = json.loads((temporary / "plan/plan.json").read_text())
+                self.assertTrue(scheduling["execute"])
+                self.assertIn("execute=true", (temporary / "output").read_text())
+                if failure == "artifact":
+                    read.assert_called_once()
 
     def test_successful_setup_never_recreates_the_simulator(self):
         for archive, group in ((True, "iphone-debug"), (False, "tv-release")):

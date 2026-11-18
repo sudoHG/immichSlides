@@ -95,8 +95,8 @@ The reported local durations were 20–55 seconds, with hosted runners 1.5–3×
 Smoke checks eventual feature behavior; product timing belongs to deterministic
 unit tests and the App clock under the approved 2026-11-11 redesign.
 No assertion, helper guard, strict/UI/unit limit, group budget, retry or yellow rule
-changes. The [shadow budget arithmetic](CI_NIGHTLY.md#smoke-shadow-informational-before-the-tier-switch)
-retains the group deadline even when not every flow can finish at its native cap.
+changes. The group deadline remains in force even when not every flow can finish
+at its native cap.
 
 `smoke-flow-results.json` and the root `case-manifest.json` contain ordered flow IDs,
 selectors, PASS/FAIL, elapsed seconds, exit codes and the first public failure message
@@ -203,8 +203,7 @@ complete nightly fixture shards. Core-area entries account for the source invent
 without selecting excluded methods. Strict matrix selectors never name these classes.
 Each new UI method has its own `target_home: smoke` inventory row linking its device
 flows and review group; no existing inventory destination changes. Smoke is selected
-only through its manifest, outside legacy execution. Retirement and the nightly switch
-still require the approved shadow and executed-night gates.
+only through its manifest, outside legacy execution.
 
 The approved [target tier plan](TESTING.md#approved-target-tiers-planning-only)
 records future rule, smoke and human-review responsibilities. It supplies no

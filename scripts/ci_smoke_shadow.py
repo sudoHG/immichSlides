@@ -342,7 +342,7 @@ def manifest_groups(manifest):
 
 def make_plan(environment, manifest, manifest_hash):
     from strict_e2e_smoke import select_scope
-    scope = environment.get("SMOKE_SCOPE") or "core"
+    scope = environment.get("SMOKE_SCOPE") or ("full" if environment["GITHUB_EVENT_NAME"] == "workflow_dispatch" else "core")
     selected = select_scope(manifest["flows"], scope)
     return {"schema_version": 1, "repository": environment["GITHUB_REPOSITORY"], "head_sha": environment["GITHUB_SHA"],
             "shadow": shadow_context(environment), "started_epoch": time.time(),
@@ -792,17 +792,17 @@ def already_tested(api, scheduling):
     repository, head = scheduling["repository"], scheduling["head_sha"]
     expected = {flow["id"] for flow in scheduling["flows"]}
     groups = {"smoke-shadow-" + group["id"] for group in scheduling["groups"]}
-    for run in api.pages("actions/workflows/ci-smoke-shadow.yml/runs", "workflow_runs",
-                         branch="main", status="completed", head_sha=head):
-        if (type(run.get("id")) is not int or not 0 < run["id"] < int(scheduling["shadow"]["id"])
-                or run.get("head_sha") != head
-                or run.get("path") != WORKFLOW or run.get("head_branch") != "main"
-                or run.get("repository", {}).get("full_name") != repository
-                or (run.get("head_repository") or {}).get("full_name") != repository
-                or run.get("status") != "completed" or run.get("conclusion") not in {"success", "failure"}
-                or run.get("event") not in {"schedule", "workflow_dispatch", "workflow_run"}):
-            continue
-        try:
+    try:
+        for run in api.pages("actions/workflows/ci-smoke-shadow.yml/runs", "workflow_runs",
+                             branch="main", status="completed", head_sha=head):
+            if (type(run.get("id")) is not int or not 0 < run["id"] < int(scheduling["shadow"]["id"])
+                    or run.get("head_sha") != head
+                    or run.get("path") != WORKFLOW or run.get("head_branch") != "main"
+                    or run.get("repository", {}).get("full_name") != repository
+                    or (run.get("head_repository") or {}).get("full_name") != repository
+                    or run.get("status") != "completed" or run.get("conclusion") not in {"success", "failure"}
+                    or run.get("event") not in {"schedule", "workflow_dispatch"}):
+                continue
             name = f"smoke-shadow-{run['id']}-{run['run_attempt']}"
             artifacts = [item for item in api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
                          if item.get("name") == name and item.get("expired") is False]
@@ -811,7 +811,7 @@ def already_tested(api, scheduling):
             record = json_member(api, artifacts[0], "shadow.json")
             if (record.get("repository") != repository or record.get("head_sha") != head
                     or record.get("shadow") != {"id": str(run["id"]), "attempt": run["run_attempt"], "event": run["event"]}
-                    or record.get("executed") is not True):
+                    or record.get("executed") is not True or record.get("outcome") not in {"passed", "failed"}):
                 continue
             executed = {row["id"] for row in record["flows"] if row.get("executed") is True
                         and row.get("official_execution_complete") is True
@@ -820,11 +820,11 @@ def already_tested(api, scheduling):
             completed = {job["name"] for job in jobs if job.get("status") == "completed"
                          and job.get("conclusion") in {"success", "failure"}}
             if expected <= executed and groups <= completed:
-                return True
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            # Unavailable history requires execution, never an assumed skip.
-            continue
-    return False
+                return {"id": str(run["id"]), "attempt": run["run_attempt"], "outcome": record["outcome"]}
+    except Exception:
+        # Any exception while reading history means not tested; execute this run.
+        return None
+    return None
 
 
 def plan_run(environment, directory, *, shared=False):
@@ -835,8 +835,13 @@ def plan_run(environment, directory, *, shared=False):
             "run source is not an ancestor of main")
     manifest, manifest_hash = manifest_at_head(head)
     scheduling = make_plan(environment, manifest, manifest_hash)
-    if environment["GITHUB_EVENT_NAME"] == "schedule" and already_tested(api, scheduling):
-        scheduling.update(execute=False, not_run_reason="Main head already tested by an earlier smoke run; all groups skipped.")
+    if environment["GITHUB_EVENT_NAME"] == "schedule":
+        tested = already_tested(api, scheduling)
+        if tested:
+            url = f"https://github.com/{scheduling['repository']}/actions/runs/{tested['id']}/attempts/{tested['attempt']}"
+            scheduling.update(execute=False, not_run_reason=(
+                f"Main head already tested by [run {tested['id']}, attempt {tested['attempt']}]({url}) "
+                f"({tested['outcome'].upper()}); all groups skipped."))
     if shared and scheduling["execute"]:
         plan_shared(scheduling, environment, api)
     if shared:

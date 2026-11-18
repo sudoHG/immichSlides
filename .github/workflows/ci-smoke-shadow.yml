@@ -3,12 +3,13 @@ name: ci-smoke-shadow
 on:
   schedule:
     - cron: '7 14 * * *'
+    - cron: '7 19 * * *'
   workflow_dispatch:
     inputs:
       scope:
         description: Smoke flow scope
         required: true
-        default: core
+        default: full
         type: choice
         options: [core, full]
 
@@ -48,7 +49,7 @@ jobs:
       - name: Select the scope and skip already-tested scheduled heads
         id: plan
         env:
-          SMOKE_SCOPE: ${{ inputs.scope || 'core' }}
+          SMOKE_SCOPE: ${{ github.event_name == 'workflow_dispatch' && (inputs.scope || 'full') || 'core' }}
           SMOKE_TOKEN: ${{ github.token }}
         run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B scripts/ci_smoke_shadow.py plan-shared'
       - name: Publish this first attempt's immutable plan
