@@ -800,7 +800,7 @@ def already_tested(api, scheduling):
                 or run.get("repository", {}).get("full_name") != repository
                 or (run.get("head_repository") or {}).get("full_name") != repository
                 or run.get("status") != "completed" or run.get("conclusion") not in {"success", "failure"}
-                or run.get("event") not in {"schedule", "workflow_dispatch"}):
+                or run.get("event") not in {"schedule", "workflow_dispatch", "workflow_run"}):
             continue
         try:
             name = f"smoke-shadow-{run['id']}-{run['run_attempt']}"

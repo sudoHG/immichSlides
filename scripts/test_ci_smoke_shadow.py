@@ -282,7 +282,7 @@ class SmokeShadowTests(unittest.TestCase):
                  "repository": {"full_name": REPOSITORY}, "head_repository": {"full_name": REPOSITORY},
                  "head_branch": "main", "head_sha": HEAD, "event": "schedule", "status": "completed",
                  "conclusion": "failure"}
-        for defect in (None, "new-head", "skipped", "cancelled", "group-skipped", "group-cancelled", "partial", "foreign", "later-run"):
+        for defect in (None, "new-head", "skipped", "cancelled", "group-skipped", "group-cancelled", "partial", "foreign", "later-run", "legacy-event"):
             for event in ("schedule", "workflow_dispatch"):
                 with self.subTest(defect=defect, event=event), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
                     temporary = Path(raw)
@@ -302,13 +302,16 @@ class SmokeShadowTests(unittest.TestCase):
                     if defect == "later-run":
                         candidate["id"] = 201
                         record["shadow"]["id"] = "201"
+                    if defect == "legacy-event":
+                        candidate["event"] = "workflow_run"
+                        record["shadow"]["event"] = "workflow_run"
                     api.pages.side_effect = lambda path, _collection, **_filters: ([candidate] if path.endswith("/runs") else [
                         {"name": f"smoke-shadow-{candidate['id']}-1", "expired": False, "id": 9}])
                     stack.enter_context(patch("ci_publish.json_member", return_value=record))
                     stack.enter_context(patch("ci_publish.complete_attempt_jobs", return_value=jobs))
                     self.assertEqual(shadow.plan_run(context, temporary / "plan"), 0)
                     scheduling = json.loads((temporary / "plan/plan.json").read_text())
-                    expected = event == "workflow_dispatch" or defect is not None
+                    expected = event == "workflow_dispatch" or defect not in {None, "legacy-event"}
                     self.assertEqual(scheduling["execute"], expected)
                     self.assertEqual(scheduling["head_sha"], HEAD)
                     self.assertIn("execute=" + str(expected).lower(), (temporary / "output").read_text())
