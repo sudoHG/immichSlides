@@ -27,14 +27,14 @@ HEAD = "a" * 40
 REPOSITORY = "example/photos"
 
 
-def environment(event="workflow_run"):
+def environment(event="workflow_dispatch"):
     return {"GITHUB_EVENT_NAME": event, "GITHUB_REF": "refs/heads/main",
             "GITHUB_REPOSITORY": REPOSITORY, "GITHUB_RUN_ID": "200", "GITHUB_RUN_ATTEMPT": "1",
-            "GITHUB_SHA": "b" * 40, "SMOKE_NIGHTLY_RUN_ID": "100"}
+            "GITHUB_SHA": HEAD, "SMOKE_SCOPE": "full"}
 
 
-def nightly():
-    return {"id": 100, "run_attempt": 1, "path": ".github/workflows/ci-nightly.yml", "workflow_id": 7,
+def run_metadata():
+    return {"id": 100, "run_attempt": 1, "path": shadow.WORKFLOW, "workflow_id": 7,
             "repository": {"full_name": REPOSITORY}, "head_repository": {"full_name": REPOSITORY},
             "head_branch": "main", "head_sha": HEAD, "event": "schedule", "status": "completed",
             "conclusion": "failure"}
@@ -49,7 +49,7 @@ def manifest():
 
 
 def plan():
-    return shadow.make_plan(environment(), nightly(), manifest(), "c" * 64, "real")
+    return shadow.make_plan(environment(), manifest(), "c" * 64)
 
 
 def shared_plan():
@@ -137,14 +137,9 @@ def replace_runner_record(directory, result):
 
 
 def plan_fixture(temporary, stack, *, ancestor=0):
-    event = temporary / "event.json"
-    shadow.write_json(event, {"workflow_run": nightly()})
-    context = dict(environment(), GITHUB_EVENT_PATH=str(event), GITHUB_OUTPUT=str(temporary / "output"))
-    api = SimpleNamespace(repository=REPOSITORY, pages=Mock(return_value=[]), repo=Mock(side_effect=lambda path:
-        nightly() if path == "actions/runs/100" else {"id": 7, "path": shadow.NIGHTLY}))
+    context = dict(environment(), GITHUB_OUTPUT=str(temporary / "output"))
+    api = SimpleNamespace(repository=REPOSITORY, pages=Mock(return_value=[]))
     stack.enter_context(patch("ci_publish.GitHub", return_value=api))
-    stack.enter_context(patch("ci_nightly_change.run_evidence", return_value="real"))
-    stack.enter_context(patch.object(shadow, "paired_nightly_aggregate", return_value={"availability": "unavailable"}))
     stack.enter_context(patch.object(shadow.subprocess, "call", return_value=ancestor))
     reader = stack.enter_context(patch.object(shadow, "manifest_at_head", return_value=(manifest(), "c" * 64)))
     return context, api, reader
@@ -213,6 +208,115 @@ class SimulatorGroupFixture(ExitStack):
 
 
 class SmokeShadowTests(unittest.TestCase):
+    def test_scopes_select_exact_flows_and_omit_empty_jobs(self):
+        import strict_e2e_smoke as smoke
+        from run_strict_e2e import main
+        flows = json.loads((shadow.ROOT / shadow.MANIFEST).read_text())
+        expected_core = {"tv-first-boot", "tv-playback-controls", "tv-pause-resume", "tv-background-return",
+                         "tv-server-switch", "iphone-first-boot", "ipad-rotation"}
+        planned = json.loads((shadow.ROOT / "scripts/ci-test-tiers.json").read_text())["smoke_flows"]
+        for scope, expected in (("core", expected_core), ("full", {flow["id"] for flow in planned})):
+            with self.subTest(scope=scope):
+                context = dict(environment("schedule"), SMOKE_SCOPE=scope)
+                scheduling = shadow.make_plan(context, flows, "c" * 64)
+                self.assertEqual({flow["id"] for flow in scheduling["flows"]}, expected)
+                self.assertEqual(len(scheduling["flows"]), 7 if scope == "core" else 23)
+                self.assertEqual(smoke.select_scope(flows["flows"], scope), scheduling["flows"])
+                groups = {group["id"] for group in scheduling["groups"]}
+                self.assertEqual(groups, {flow["device"] + "-" + flow["configuration"].lower()
+                                         for flow in scheduling["flows"]})
+                self.assertEqual(groups, {"iphone-debug", "ipad-debug", "tv-debug", "tv-release"}
+                                 if scope == "core" else set(shadow.GROUP_BUDGET_MINUTES))
+                for group in scheduling["groups"]:
+                    command = shadow.runner_command(group, "synthetic", Path("/tmp/synthetic"), Path("/tmp/evidence"),
+                                                    warm=True, scope=scope)
+                    with patch.object(smoke, "run", return_value=0) as run:
+                        self.assertEqual(main(command[3:], stdout=io.StringIO(), stderr=io.StringIO()), 0)
+                    arguments = run.call_args.args[0]
+                    self.assertEqual(arguments.smoke_scope, scope)
+                    runner = SimpleNamespace(CommandError=ValueError, data_available_gib=lambda: 100,
+                        ensure_disk_for_xcodebuild=Mock(side_effect=RuntimeError("selection inspected")))
+                    methods = {flow["selector"]: {flow["platform"]} for flow in flows["flows"]}
+                    with patch.object(smoke, "select_flows", wraps=smoke.select_flows) as select, \
+                            patch.object(smoke, "load_manifest", return_value=(flows, planned, methods)), \
+                            self.assertRaisesRegex(RuntimeError, "selection inspected"):
+                        smoke.run(arguments, shadow.ROOT, runner, io.StringIO(), io.StringIO())
+                    self.assertEqual(select.call_args.args[0], scheduling["flows"])
+                with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+                    temporary = Path(raw)
+                    context, _api, reader = plan_fixture(temporary, stack)
+                    reader.return_value = (flows, "c" * 64)
+                    context["SMOKE_SCOPE"] = scope
+                    self.assertEqual(shadow.plan_run(context, temporary / "plan"), 0)
+                    outputs = (temporary / "output").read_text()
+                    self.assertIn("ios_debug=true", outputs)
+                    self.assertIn("ios_release=" + str(scope == "full").lower(), outputs)
+        with self.assertRaises(ValueError):
+            smoke.select_scope(flows["flows"], "unknown")
+
+    def test_admission_requires_main_schedule_or_dispatch_and_first_attempt(self):
+        for event in ("schedule", "workflow_dispatch"):
+            self.assertEqual(shadow.admit(environment(event)), HEAD)
+        for change in ({"GITHUB_REF": "refs/heads/topic"}, {"GITHUB_EVENT_NAME": "workflow_run"},
+                       {"GITHUB_EVENT_NAME": "pull_request"}, {"GITHUB_RUN_ATTEMPT": "2"}, {"GITHUB_SHA": "invalid"}):
+            with self.subTest(change=change), self.assertRaises(ContractError):
+                shadow.admit(dict(environment(), **change))
+
+    def test_workflow_policy_requires_scopes_schedule_and_run_head(self):
+        import check_workflow_policy as policy
+        import yaml
+        workflow = yaml.load((shadow.ROOT / shadow.WORKFLOW).read_text(), Loader=policy.WorkflowLoader)
+        self.assertEqual(policy.check_workflow(shadow.WORKFLOW, yaml.safe_dump(workflow)), [])
+        for mutate in (lambda doc: doc["on"]["schedule"][0].update(cron="7 19 * * *"),
+                       lambda doc: doc["on"]["workflow_dispatch"]["inputs"]["scope"].update(options=["full"]),
+                       lambda doc: doc["jobs"]["plan"]["steps"][0]["with"].update(ref="main"),
+                       lambda doc: doc["jobs"]["ios-release"].update({"if": doc["jobs"]["flows"]["if"]})):
+            changed = copy.deepcopy(workflow)
+            mutate(changed)
+            with self.subTest(mutation=mutate):
+                self.assertIn("smoke-shadow-contract", {item.rule for item in policy.check_workflow(
+                    shadow.WORKFLOW, yaml.safe_dump(changed))})
+
+    def test_schedule_skips_only_a_source_with_completed_flow_results_dispatch_always_runs(self):
+        prior = {"id": 100, "run_attempt": 1, "path": shadow.WORKFLOW, "workflow_id": 7,
+                 "repository": {"full_name": REPOSITORY}, "head_repository": {"full_name": REPOSITORY},
+                 "head_branch": "main", "head_sha": HEAD, "event": "schedule", "status": "completed",
+                 "conclusion": "failure"}
+        for defect in (None, "new-head", "skipped", "cancelled", "group-skipped", "group-cancelled", "partial", "foreign", "later-run"):
+            for event in ("schedule", "workflow_dispatch"):
+                with self.subTest(defect=defect, event=event), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+                    temporary = Path(raw)
+                    context, api, _reader = plan_fixture(temporary, stack)
+                    context["GITHUB_EVENT_NAME"] = event
+                    record = shadow.aggregate(plan(), group_records(plan()), "success")
+                    record["shadow"] = dict(record["shadow"], id="100", event="schedule")
+                    candidate = dict(prior)
+                    jobs = [{"name": "smoke-shadow-" + group["id"], "status": "completed", "conclusion": "success"}
+                            for group in plan()["groups"]]
+                    if defect == "new-head": candidate["head_sha"] = "d" * 40
+                    if defect == "skipped": record["executed"] = False
+                    if defect == "cancelled": candidate["conclusion"] = "cancelled"
+                    if defect in {"group-skipped", "group-cancelled"}: jobs[0]["conclusion"] = defect[6:]
+                    if defect == "partial": record["flows"][0]["executed"] = False
+                    if defect == "foreign": candidate["head_repository"] = {"full_name": "foreign/repo"}
+                    if defect == "later-run":
+                        candidate["id"] = 201
+                        record["shadow"]["id"] = "201"
+                    api.pages.side_effect = lambda path, _collection, **_filters: ([candidate] if path.endswith("/runs") else [
+                        {"name": f"smoke-shadow-{candidate['id']}-1", "expired": False, "id": 9}])
+                    stack.enter_context(patch("ci_publish.json_member", return_value=record))
+                    stack.enter_context(patch("ci_publish.complete_attempt_jobs", return_value=jobs))
+                    self.assertEqual(shadow.plan_run(context, temporary / "plan"), 0)
+                    scheduling = json.loads((temporary / "plan/plan.json").read_text())
+                    expected = event == "workflow_dispatch" or defect is not None
+                    self.assertEqual(scheduling["execute"], expected)
+                    self.assertEqual(scheduling["head_sha"], HEAD)
+                    self.assertIn("execute=" + str(expected).lower(), (temporary / "output").read_text())
+                    if not expected:
+                        result = shadow.aggregate(scheduling, [], "skipped")
+                        self.assertEqual(result["outcome"], "not-run")
+                        self.assertEqual(shadow.markdown(result).count("\n"), 1)
+
     def test_successful_setup_never_recreates_the_simulator(self):
         for archive, group in ((True, "iphone-debug"), (False, "tv-release")):
             with self.subTest(archive=archive), SimulatorGroupFixture(archive=archive, group_id=group) as fixture:
@@ -414,7 +518,6 @@ class SmokeShadowTests(unittest.TestCase):
                         self.assertIsNone(record["setup_failure_step"])
                         self.assertIsNone(record["setup_failure_command"])
                         self.assertTrue(all(row["outcome"] == "not-run" and not row["executed"] for row in record["flows"]))
-                        self.assertFalse(shadow.aggregate(fixture.scheduling, [record], "failure")["comparison_eligible"])
 
     def test_cleanup_uses_the_fresh_published_device_even_when_its_boot_fails(self):
         from strict_e2e_runner_support import InfrastructureTimeout
@@ -462,7 +565,6 @@ class SmokeShadowTests(unittest.TestCase):
                 self.assertEqual(result["group_timings"]["iphone-debug"].get("simulator_recreate"), value if valid else None)
                 if valid:
                     shadow.check_group_upload(Path(raw), records[0])
-                    self.assertTrue(result["comparison_eligible"])
                     line = next(line for line in shadow.markdown(result).splitlines() if line.startswith("| iphone-debug |"))
                     self.assertIn("none" if value is None else value["step"] + "/" + value["command"], line)
                 else:
@@ -550,7 +652,7 @@ class SmokeShadowTests(unittest.TestCase):
             temporary = root / ".git/runner"
             context = dict(environment(), RUNNER_TEMP=str(temporary), GITHUB_SHA=planned,
                            GITHUB_WORKFLOW_REF=REPOSITORY + "/" + shadow.WORKFLOW + "@refs/heads/main")
-            run = dict(nightly(), id=200, workflow_id=8, path=shadow.WORKFLOW, head_sha=planned, event="workflow_run")
+            run = dict(run_metadata(), id=200, workflow_id=8, path=shadow.WORKFLOW, head_sha=planned, event="workflow_dispatch")
             api = SimpleNamespace(repo=lambda path: run if path == "actions/runs/200" else {"id": 8, "path": shadow.WORKFLOW})
             with patch.object(shadow, "ROOT", root), patch("ci_publish.GitHub", return_value=api):
                 control = shadow.authoritative_control(context, api)
@@ -771,7 +873,7 @@ class SmokeShadowTests(unittest.TestCase):
                         + ("" if command == "readiness" else f"; timeout={timeout_seconds}s") + "\n") if timed_out else "")
                     run.assert_not_called()
                     result = shadow.aggregate(scheduling, [record], "failure")
-                    self.assertEqual((result["outcome"], result["comparison_eligible"]), ("failed", False))
+                    self.assertEqual(result["outcome"], "failed")
                     self.assertEqual(result["group_timings"]["iphone-debug"]["setup_failure_step"], step)
                     self.assertEqual(result["group_timings"]["iphone-debug"]["setup_failure_command"], command)
                     self.assertIn(step, shadow.markdown(result))
@@ -790,7 +892,6 @@ class SmokeShadowTests(unittest.TestCase):
                 self.assertIs(shadow.valid_setup_failure(records[0]), valid)
                 result = shadow.aggregate(plan(), records, "failure")
                 self.assertEqual("invalid group setup failure: iphone-debug" in result["errors"], not valid)
-                self.assertFalse(result["comparison_eligible"])
                 with patch.object(shadow, "scan_records"), patch("ci_failure_diagnostics.validate_ui_first_failure_images"):
                     if valid:
                         shadow.check_group_upload(Path(raw), records[0])
@@ -863,7 +964,7 @@ class SmokeShadowTests(unittest.TestCase):
                                             official_execution_complete=False)
                 result = shadow.aggregate(scheduling, records, "failure")
                 self.assertIn("invalid group setup failure: iphone-debug", result["errors"])
-                self.assertEqual((result["outcome"], result["comparison_eligible"]), ("failed", False))
+                self.assertEqual(result["outcome"], "failed")
                 timing = result["group_timings"]["iphone-debug"]
                 self.assertNotIn("setup_failure_step", timing)
                 self.assertNotIn("setup_failure_command", timing)
@@ -880,7 +981,7 @@ class SmokeShadowTests(unittest.TestCase):
             self.assertFalse(scheduling["execute"])
             self.assertIn("predates the complete", scheduling["not_run_reason"])
             record = shadow.aggregate(scheduling, [], "skipped")
-            self.assertEqual((record["outcome"], record["comparison_eligible"]), ("not-run", False))
+            self.assertEqual(record["outcome"], "not-run")
             self.assertIn("predates the complete", shadow.markdown(record))
 
     def test_hosted_stages_require_runner_temp_before_any_filesystem_action(self):
@@ -1014,29 +1115,12 @@ class SmokeShadowTests(unittest.TestCase):
                 shadow.cleanup(dict(environment(), SMOKE_CONFIGURATION="Debug"), temporary)
             self.assertTrue((temporary / "smoke-producer/ownership.json").is_file())
 
-    def test_suppressed_shared_plans_preserve_not_run_without_requiring_a_historical_archive_reader(self):
-        for reason in ("active", "unchanged", "conclusion"):
-            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
-                temporary = Path(raw)
-                context, api, _reader = plan_fixture(temporary, stack)
-                if reason == "active":
-                    api.pages.side_effect = lambda _path, _collection, **filters: [dict(nightly(), id=101, status=filters["status"])]
-                elif reason == "unchanged":
-                    stack.enter_context(patch("ci_nightly_change.run_evidence", return_value="skipped"))
-                else:
-                    run = dict(nightly(), conclusion="cancelled")
-                    api.repo.side_effect = lambda path: run if path == "actions/runs/100" else {"id": 7, "path": shadow.NIGHTLY}
-                shared = stack.enter_context(patch.object(shadow, "plan_shared", side_effect=AssertionError("suppressed plan checked archive support")))
-                self.assertEqual(shadow.plan_run(context, temporary / "plan", shared=True), 0)
-                shared.assert_not_called()
-                scheduling = json.loads((temporary / "plan/plan.json").read_text())
-                self.assertEqual(shadow.aggregate(scheduling, [], "skipped")["outcome"], "not-run")
 
     def test_shared_control_requires_authoritative_main_run_and_keeps_the_staged_source_separate(self):
         with tempfile.TemporaryDirectory() as raw:
-            context = dict(environment(), RUNNER_TEMP=raw,
+            context = dict(environment(), RUNNER_TEMP=raw, GITHUB_SHA="b" * 40,
                            GITHUB_WORKFLOW_REF=REPOSITORY + "/" + shadow.WORKFLOW + "@refs/heads/main")
-            run = dict(nightly(), id=200, path=shadow.WORKFLOW, workflow_id=8, head_sha="b" * 40, event="workflow_run")
+            run = dict(run_metadata(), id=200, path=shadow.WORKFLOW, workflow_id=8, head_sha="b" * 40, event="workflow_dispatch")
             workflow = {"id": 8, "path": shadow.WORKFLOW}
             api = SimpleNamespace(repo=lambda path: run if path == "actions/runs/200" else workflow)
             with patch.object(shadow.subprocess, "call", return_value=0), patch.object(shadow, "git", return_value="c" * 40):
@@ -1044,7 +1128,7 @@ class SmokeShadowTests(unittest.TestCase):
                 self.assertEqual((control["api_head_sha"], control["control_source_sha"], control["run_id"]),
                                  ("b" * 40, "c" * 40, "200"))
                 for field, value in (("head_sha", HEAD), ("head_branch", "topic"), ("run_attempt", 2),
-                                     ("workflow_id", 9), ("path", shadow.NIGHTLY),
+                                     ("workflow_id", 9), ("path", ".github/workflows/other.yml"),
                                      ("repository", {"full_name": "other/repo"})):
                     changed = dict(run, **{field: value})
                     bad_api = SimpleNamespace(repo=lambda path: changed if path == "actions/runs/200" else workflow)
@@ -1105,7 +1189,7 @@ class SmokeShadowTests(unittest.TestCase):
                                                         control={}, manifest_hash=digest)
                         self.assertFalse((root / "relocated" / build.SMOKE_RECEIPT).exists())
 
-    def test_archive_timing_requires_provenance_and_failed_producers_cannot_count(self):
+    def test_archive_timing_requires_provenance_and_failed_producers_stay_red(self):
         scheduling = plan()
         scheduling.update(build_mode=shadow.ARCHIVE_MODE, control={"run_id": "200"}, tested_source={"head_sha": HEAD})
         provenance = {"configuration": "Debug", "artifact_id": 91, "manifest_sha256": "d" * 64,
@@ -1120,8 +1204,8 @@ class SmokeShadowTests(unittest.TestCase):
                           transfer_seconds=2, verify_seconds=1)
         records[0]["phases"][0]["name"] = "archive-verify"
         good = shadow.aggregate(scheduling, records, "success", producers=producers, producer_results={"Debug": "success", "Release": "success"})
-        self.assertEqual((good["outcome"], good["executed"], good["comparison_eligible"]), ("passed", True, True))
-        self.assertEqual(good["shared_build_runner_seconds"], 40)
+        self.assertEqual((good["outcome"], good["executed"]), ("passed", True))
+        self.assertEqual(good["shared_build_runner_seconds"], 20)
         self.assertIn("archive-verify", str(good["group_timings"]))
         unknown_records, unknown_producers = copy.deepcopy(records), copy.deepcopy(producers)
         unknown_records[0]["transfer_seconds"] = None
@@ -1129,7 +1213,7 @@ class SmokeShadowTests(unittest.TestCase):
         unknown_producers[0]["timing"]["upload_seconds"] = None
         unknown = shadow.aggregate(scheduling, unknown_records, "success", producers=unknown_producers,
                                    producer_results={"Debug": "success", "Release": "success"})
-        self.assertEqual((unknown["outcome"], unknown["comparison_eligible"]), ("passed", True))
+        self.assertEqual(unknown["outcome"], "passed")
         self.assertIsNone(unknown["group_timings"]["iphone-debug"]["transfer_seconds"])
         self.assertIsNone(unknown["group_timings"]["iphone-debug"]["verify_seconds"])
         for index in (0, 1):
@@ -1143,7 +1227,7 @@ class SmokeShadowTests(unittest.TestCase):
                     result = shadow.aggregate(scheduling, invalid, "success", producers=producers,
                                               producer_results={"Debug": "success", "Release": "success"})
                     self.assertIn("invalid group job timing: " + records[index]["group"]["id"], result["errors"])
-                    self.assertEqual((result["outcome"], result["comparison_eligible"]), ("failed", False))
+                    self.assertEqual(result["outcome"], "failed")
         rejected = copy.deepcopy(records)
         rejected[0].update(build_provenance=None, runner_exit_code=1, errors=["archive-verification-failed"])
         rejected[0]["phases"] = [{"name": "archive-verify", "elapsed_seconds": 12, "exit_code": 1}]
@@ -1171,12 +1255,11 @@ class SmokeShadowTests(unittest.TestCase):
             result = shadow.aggregate(scheduling, changed, "success", producers=builds, producer_results={"Debug": "success", "Release": "success"})
             with self.subTest(defect=defect):
                 self.assertEqual(result["outcome"], "failed")
-                self.assertFalse(result["comparison_eligible"])
                 if defect in {"missing-producer", "failed-producer"}:
                     self.assertEqual(result["flows"][0]["outcome"], "not-run")
         failed_api = shadow.aggregate(scheduling, records, "success", producers=producers,
                                       producer_results={"Debug": "failure", "Release": "success"})
-        self.assertFalse(failed_api["comparison_eligible"])
+        self.assertEqual(failed_api["outcome"], "failed")
 
     def test_smoke_archive_manifest_binds_tested_source_and_control_independently(self):
         import strict_e2e_build as build
@@ -1192,7 +1275,7 @@ class SmokeShadowTests(unittest.TestCase):
         cases = [("source", "head_sha", "b" * 40), ("source", "head_sha", "f" * 40),
                  ("source", "tree_sha", "f" * 40), ("source", "source_sha256", "f" * 64),
                  ("control", "attempt", 2), ("control", "workflow_id", 9),
-                 ("control", "workflow_path", shadow.NIGHTLY), ("control", "api_head_sha", HEAD),
+                 ("control", "workflow_path", ".github/workflows/other.yml"), ("control", "api_head_sha", HEAD),
                  ("control", "main_admitted", False), ("configuration", None, "Release"),
                  ("signing_mode", None, "unsigned"), ("private_configuration_present", None, True)]
         for section, key, value in cases:
@@ -1239,61 +1322,11 @@ class SmokeShadowTests(unittest.TestCase):
                 changed = copy.deepcopy(records)
                 changed[0]["flows"][0]["first_failure"] = receipt
                 result = shadow.aggregate(scheduling, changed, "failure")
-                self.assertEqual((result["outcome"], result["executed"], result["comparison_eligible"]),
-                                 ("failed", True, True))
+                self.assertEqual((result["outcome"], result["executed"]), ("failed", True))
                 self.assertNotIn("first_failure", result["flows"][0])
-                for key in ("outcome", "executed", "comparison_eligible", "errors", "flows"):
+                for key in ("outcome", "executed", "errors", "flows"):
                     self.assertEqual(result[key], baseline[key])
 
-    def test_admission_refuses_untrusted_or_unfinished_nightly_and_non_main_dispatch(self):
-        run = nightly()
-        payload = {"workflow_run": run}
-        workflow = {"id": 7, "path": run["path"]}
-        self.assertEqual(shadow.admit(environment(), payload, run, workflow), HEAD)
-        cases = [
-            ("repository", {"full_name": "other/repo"}, "nightly source"),
-            ("head_repository", None, "nightly source"),
-            ("head_repository", {"full_name": "other/repo"}, "nightly source"),
-            ("head_branch", "topic", "nightly source"),
-            ("event", "pull_request", "nightly source"),
-            ("path", ".github/workflows/other.yml", "nightly workflow"),
-            ("workflow_id", 8, "nightly workflow"),
-            ("status", "in_progress", "nightly must be completed"),
-            ("head_sha", "invalid", "40-digit hash"),
-            ("run_attempt", 2, "completion event differs"),
-        ]
-        for key, value, message in cases:
-            with self.subTest(key=key, value=value):
-                changed = dict(run, **{key: value})
-                with self.assertRaisesRegex(ContractError, message):
-                    shadow.admit(environment(), payload, changed, workflow)
-        for change, message in [({"GITHUB_REF": "refs/heads/topic"}, "main-only"),
-                                ({"GITHUB_EVENT_NAME": "push"}, "main-only"),
-                                ({"GITHUB_RUN_ATTEMPT": "2"}, "first attempt"),
-                                ({"SMOKE_NIGHTLY_RUN_ID": "bad"}, "nightly run ID")]:
-            with self.subTest(change=change), self.assertRaisesRegex(ContractError, message):
-                shadow.admit(dict(environment("workflow_dispatch"), **change), {}, run, workflow)
-        from ci_nightly_change import FULL_MANUAL_TITLE
-        full = dict(run, event="workflow_dispatch", display_title=FULL_MANUAL_TITLE)
-        self.assertEqual(shadow.admit(environment(), {"workflow_run": full}, full, workflow), HEAD)
-        for diagnostic in ("probe_environment_refusal", "shard", "ui_only", "strict_only", "live_only", "unknown"):
-            with self.subTest(diagnostic=diagnostic):
-                diagnostic_run = dict(full, display_title="ci-nightly diagnostic", inputs={diagnostic: True})
-                with self.assertRaisesRegex(ContractError, "full scheduled or manual nightly"):
-                    shadow.admit(environment(), {"workflow_run": diagnostic_run}, diagnostic_run, workflow)
-        with self.assertRaisesRegex(ContractError, "full scheduled or manual nightly"):
-            shadow.admit(environment("workflow_dispatch"), {}, dict(full, display_title=None), workflow)
-
-    def test_groups_follow_manifest_and_manual_skip_still_executes(self):
-        scheduling = plan()
-        self.assertEqual({item["id"] for item in scheduling["groups"]}, {"iphone-debug", "tv-release"})
-        self.assertEqual([flow["id"] for flow in shadow.group_flows(scheduling, "tv-release")], ["tv-one"])
-        skipped = shadow.make_plan(environment(), nightly(), manifest(), "c" * 64, "skipped")
-        self.assertFalse(skipped["execute"])
-        manual = shadow.make_plan(environment("workflow_dispatch"), nightly(), manifest(), "c" * 64, "skipped")
-        self.assertTrue(manual["execute"])
-        with self.assertRaisesRegex(ContractError, "unknown smoke group"):
-            shadow.group_flows(scheduling, "other")
 
     def test_plan_binding_rejects_foreign_attempt_head_and_manifest(self):
         scheduling = plan()
@@ -1313,20 +1346,18 @@ class SmokeShadowTests(unittest.TestCase):
         scheduling = plan()
         records = group_records(scheduling)
         passing = shadow.aggregate(scheduling, records, "success")
-        self.assertEqual((passing["outcome"], passing["executed"], passing["comparison_eligible"]),
-                         ("passed", True, True))
+        self.assertEqual((passing["outcome"], passing["executed"]), ("passed", True))
         records[0]["runner_exit_code"] = 65
         records[0]["flows"][0].update(outcome="failed", failure_category="assertion",
                                       first_failure_message="smoke: expected | actual\n<script>")
         result = shadow.aggregate(scheduling, records, "failure")
         self.assertEqual(result["outcome"], "failed")
         self.assertTrue(result["executed"])
-        self.assertTrue(result["comparison_eligible"])
         self.assertEqual(result["flows"][0]["first_failure_message"], "smoke: expected | actual\n<script>")
         markdown = shadow.markdown(result)
         self.assertIn("expected &#124; actual", markdown)
         self.assertNotIn("<script>", markdown)
-        self.assertIn("100", markdown)
+        self.assertIn(HEAD, markdown)
         records[0]["flows"][0]["failure_category"] = "xctest-tool"
         self.assertEqual(shadow.aggregate(scheduling, records, "failure")["outcome"], "failed")
 
@@ -1374,57 +1405,9 @@ class SmokeShadowTests(unittest.TestCase):
                 result = shadow.aggregate(scheduling, changed, "success")
                 self.assertEqual(result["outcome"], "failed")
                 self.assertTrue(any(message in item for item in result["errors"]), result["errors"])
-                self.assertFalse(result["comparison_eligible"])
         failed_job = shadow.aggregate(scheduling, records, "failure")
         self.assertEqual(failed_job["outcome"], "failed")
-        self.assertFalse(failed_job["comparison_eligible"])
 
-    def test_shadow_count_uses_new_first_execution_and_keeps_old_yellow_and_infra(self):
-        for status, errors in [("environment-limited", []), ("failed", ["producer infrastructure failure"])]:
-            with self.subTest(old_status=status):
-                old = {"status": status, "environment_limited": [{"raw": "unchanged"}], "errors": errors}
-                scheduling = shadow.make_plan(environment(), nightly(), manifest(), "c" * 64, "unverified", old)
-                result = shadow.aggregate(scheduling, group_records(scheduling), "success")
-                self.assertTrue(result["comparison_eligible"])
-                self.assertEqual(result["nightly"]["aggregate"], old)
-                missing = shadow.aggregate(scheduling, group_records(scheduling)[:1], "failure")
-                self.assertFalse(missing["comparison_eligible"])
-                cancelled_records = group_records(scheduling)
-                cancelled_records[0]["flows"][0]["outcome"] = "failed"
-                cancelled_records[0]["runner_exit_code"] = 65
-                cancelled = shadow.aggregate(scheduling, cancelled_records, "cancelled")
-                self.assertFalse(cancelled["comparison_eligible"])
-        for field, value in [("head_sha", "d" * 40), ("status", "in_progress")]:
-            with self.subTest(pair_field=field):
-                scheduling = plan()
-                scheduling["nightly"][field] = value
-                self.assertFalse(shadow.aggregate(scheduling, group_records(scheduling), "success")["comparison_eligible"])
-        scheduling = plan()
-        scheduling["shadow"]["attempt"] = 2
-        self.assertFalse(shadow.aggregate(scheduling, group_records(scheduling), "success")["comparison_eligible"])
-        scheduling = shadow.make_plan(environment(), nightly(), manifest(), "c" * 64, "skipped")
-        result = shadow.aggregate(scheduling, [], "skipped")
-        self.assertEqual(result["outcome"], "not-run")
-        self.assertFalse(result["executed"])
-        self.assertFalse(result["comparison_eligible"])
-        cancelled = plan()
-        cancelled["nightly"]["conclusion"] = "cancelled"
-        self.assertFalse(shadow.aggregate(cancelled, group_records(cancelled), "success")["comparison_eligible"])
-        automatic = shadow.aggregate(plan(), group_records(plan()), "success")
-        repeated = plan()
-        repeated["shadow"]["id"] = "201"
-        repeated["shadow"]["event"] = "workflow_dispatch"
-        manual_result = shadow.aggregate(repeated, group_records(repeated), "success")
-        self.assertEqual(automatic["nightly_run_id"], manual_result["nightly_run_id"])
-        other_nightly = plan()
-        other_nightly["nightly"]["id"] = "101"
-        self.assertNotEqual(automatic["nightly_run_id"], shadow.aggregate(
-            other_nightly, group_records(other_nightly), "success")["nightly_run_id"])
-        manual = shadow.make_plan(environment("workflow_dispatch"), nightly(), manifest(), "c" * 64, "skipped")
-        result = shadow.aggregate(manual, group_records(manual), "success")
-        self.assertEqual(result["outcome"], "passed")
-        self.assertTrue(result["executed"])
-        self.assertFalse(result["comparison_eligible"])
 
     def test_plan_ancestor_guard_rejects_before_loading_manifest(self):
         with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
@@ -1433,50 +1416,6 @@ class SmokeShadowTests(unittest.TestCase):
                 shadow.plan_run(context, Path(raw) / "plan")
             reader.assert_not_called()
 
-    def test_plan_blocks_active_main_nightlies_and_scans_the_non_counting_record(self):
-        from ci_nightly_change import ACTIVE_RUN_STATUSES
-        for status in (*sorted(ACTIVE_RUN_STATUSES), None):
-            with self.subTest(status=status), tempfile.TemporaryDirectory() as raw:
-                temporary = Path(raw)
-                with ExitStack() as stack:
-                    context, api, _reader = plan_fixture(temporary, stack)
-                    active = dict(nightly(), id=101, status=status)
-                    api.pages.side_effect = lambda _path, _collection, **filters: [active] if filters["status"] == status else []
-                    self.assertEqual(shadow.plan_run(context, temporary / "plan"), 0)
-                scheduling = json.loads((temporary / "plan/plan.json").read_text())
-                self.assertEqual(scheduling["execute"], status is None)
-                self.assertTrue("execute=" + str(status is None).lower() in (temporary / "output").read_text(),
-                                "planner output matches its execution decision")
-                self.assertTrue((temporary / "plan/sensitive-scan.json").is_file())
-                self.assertIn("records_safe=true", (temporary / "output").read_text())
-                if status:
-                    self.assertEqual(scheduling["blocked_by_active_nightly"], ["101"])
-                    result = shadow.aggregate(scheduling, [], "skipped")
-                    self.assertEqual((result["outcome"], result["comparison_eligible"]), ("not-run", False))
-                    self.assertIn("nightly is active", result["flows"][0]["first_failure_message"])
-        with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
-            context, api, _reader = plan_fixture(Path(raw), stack)
-            api.pages.side_effect = lambda _path, _collection, **filters: [dict(nightly(), status=filters["status"], head_branch="topic")]
-            with self.assertRaisesRegex(ContractError, "active nightly listing differs"):
-                shadow.plan_run(context, Path(raw) / "plan")
-
-    def test_plan_never_executes_nightlies_without_a_real_result_conclusion(self):
-        for conclusion in ("cancelled", "timed_out", "startup_failure", "neutral"):
-            for event in ("workflow_run", "workflow_dispatch"):
-                with self.subTest(conclusion=conclusion, event=event), tempfile.TemporaryDirectory() as raw:
-                    temporary = Path(raw)
-                    with ExitStack() as stack:
-                        context, api, _reader = plan_fixture(temporary, stack)
-                        context["GITHUB_EVENT_NAME"] = event
-                        run = dict(nightly(), conclusion=conclusion)
-                        api.repo.side_effect = lambda path: run if path == "actions/runs/100" else {"id": 7, "path": shadow.NIGHTLY}
-                        self.assertEqual(shadow.plan_run(context, temporary / "plan"), 0)
-                    scheduling = json.loads((temporary / "plan/plan.json").read_text())
-                    self.assertFalse(scheduling["execute"])
-                    self.assertTrue("execute=false" in (temporary / "output").read_text(), "planner publishes execute=false")
-                    self.assertIn("not success/failure", scheduling["not_run_reason"])
-                    result = shadow.aggregate(scheduling, [], "skipped")
-                    self.assertEqual((result["outcome"], result["comparison_eligible"]), ("not-run", False))
 
     def test_plan_scan_failure_never_publishes_safe_outputs(self):
         with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
@@ -1487,15 +1426,15 @@ class SmokeShadowTests(unittest.TestCase):
             self.assertFalse((Path(raw) / "output").exists())
 
     def test_skipped_plan_rejects_artifacts_and_failed_matrix(self):
-        scheduling = shadow.make_plan(environment(), nightly(), manifest(), "c" * 64, "skipped")
+        scheduling = dict(plan(), execute=False, not_run_reason="Main head already tested; all groups skipped.")
         for records, matrix in ((group_records(scheduling), "skipped"), ([], "failure")):
             with self.subTest(matrix=matrix, records=bool(records)):
                 result = shadow.aggregate(scheduling, records, matrix)
-                self.assertIn("unexpected execution on skipped nightly", result["errors"])
-                self.assertEqual((result["outcome"], result["comparison_eligible"]), ("failed", False))
+                self.assertIn("unexpected execution on skipped smoke", result["errors"])
+                self.assertEqual(result["outcome"], "failed")
 
     def test_group_refuses_suppressed_plan_before_creating_simulator(self):
-        scheduling = shadow.make_plan(environment(), nightly(), manifest(), "c" * 64, "skipped")
+        scheduling = dict(plan(), execute=False, not_run_reason="Main head already tested; all groups skipped.")
         with tempfile.TemporaryDirectory() as raw, patch.object(shadow, "git", return_value=HEAD), \
                 patch("ci_build_archive.file_hash", return_value="c" * 64), \
                 patch.object(shadow, "job_started_epoch", return_value=time.time()), \
@@ -1664,7 +1603,7 @@ class SmokeShadowTests(unittest.TestCase):
 
     def test_group_setup_time_consumes_the_selected_budget(self):
         smoke_manifest = json.loads((shadow.ROOT / shadow.MANIFEST).read_text())
-        scheduling = shadow.make_plan(environment(), nightly(), smoke_manifest, "c" * 64, "real")
+        scheduling = shadow.make_plan(environment(), smoke_manifest, "c" * 64)
         expected = {"iphone-debug": 27, "iphone-release": 27, "ipad-debug": 27,
                     "ipad-release": 27, "tv-debug": 22, "tv-release": 22}
         self.assertEqual({group["id"] for group in scheduling["groups"]}, set(expected))
@@ -1724,28 +1663,6 @@ class SmokeShadowTests(unittest.TestCase):
                     if clock_failure:
                         runner.assert_not_called()
 
-    def test_paired_nightly_preserves_raw_verdict_only_for_matching_run_and_sha(self):
-        run = nightly()
-        api = SimpleNamespace(repository=REPOSITORY, pages=lambda *_: [
-            {"name": "nightly-aggregate-100-1", "expired": False, "id": 1}])
-        old = {"run": {"id": "100", "attempt": 1}, "identity": {"repository": REPOSITORY, "commit_sha": HEAD},
-               "status": "environment-limited", "environment_limited": [{"raw": "unchanged"}],
-               "errors": ["original infrastructure error"], "matrix": {"equal": False}, "tiers": {"ui": "failed"}}
-        with patch("ci_publish.json_member", return_value=old):
-            record = shadow.paired_nightly_aggregate(api, run)
-        self.assertEqual(record, {"availability": "present", **{key: old[key] for key in
-                         ("status", "environment_limited", "errors", "matrix", "tiers")}})
-        for field, value in [("run", {"id": "100", "attempt": 2}),
-                             ("identity", None),
-                             ("identity", {"repository": REPOSITORY, "commit_sha": "d" * 40})]:
-            with self.subTest(field=field), patch("ci_publish.json_member", return_value=dict(old, **{field: value})):
-                with self.assertRaisesRegex(ContractError, "paired nightly aggregate source differs"):
-                    shadow.paired_nightly_aggregate(api, run)
-        with patch("ci_publish.json_member", return_value=None):
-            with self.assertRaisesRegex(ContractError, "paired nightly aggregate source differs"):
-                shadow.paired_nightly_aggregate(api, run)
-        missing_api = SimpleNamespace(repository=REPOSITORY, pages=lambda *_: [])
-        self.assertEqual(shadow.paired_nightly_aggregate(missing_api, run), {"availability": "unavailable"})
 
     def test_runner_adapter_requires_source_bound_official_results_before_claiming_execution(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -1926,7 +1843,7 @@ class SmokeShadowTests(unittest.TestCase):
                 groups = group_records(plan())
                 groups[0] = group
                 result = shadow.aggregate(plan(), groups, "failure")
-                self.assertEqual((result["outcome"], result["executed"], result["comparison_eligible"]), ("failed", True, True))
+                self.assertEqual((result["outcome"], result["executed"]), ("failed", True))
                 if "first_failure" in row:
                     self.assertEqual(result["flows"][0]["first_failure"], row["first_failure"])
                     self.assertIn(render_first_failure(row["first_failure"]), shadow.markdown(result))
@@ -2058,7 +1975,6 @@ class SmokeShadowTests(unittest.TestCase):
                     records[0]["flows"][0]["executed"] = change["official_execution_complete"]
                 summary = shadow.aggregate(plan(), records, "success")
                 self.assertEqual(summary["outcome"], "failed")
-                self.assertFalse(summary["comparison_eligible"])
                 self.assertTrue(any("pretest failure step" in error for error in summary["errors"]))
                 self.assertNotIn("private-input-sentinel", shadow.markdown(summary))
                 with patch.object(shadow, "scan_records"), self.assertRaisesRegex(ContractError, "pretest failure step"):
@@ -2114,7 +2030,7 @@ class SmokeShadowTests(unittest.TestCase):
         from ci_build_archive import file_hash
         first = manifest()["flows"][0]
         second = dict(first, id="phone-two", selector="Smoke/testSecond")
-        scheduling = shadow.make_plan(environment(), nightly(), {"schema_version": 1, "flows": [first, second]}, "c" * 64, "real")
+        scheduling = shadow.make_plan(environment(), {"schema_version": 1, "flows": [first, second]}, "c" * 64)
         with tempfile.TemporaryDirectory() as raw:
             temporary = Path(raw)
             context = dict(environment(), SMOKE_GROUP="iphone-debug", GITHUB_OUTPUT=str(temporary / "output"))
@@ -2150,7 +2066,6 @@ class SmokeShadowTests(unittest.TestCase):
             self.assertGreaterEqual(record["job_elapsed_seconds"], 60)
             result = shadow.aggregate(scheduling, [record], "failure")
             self.assertEqual(result["outcome"], "failed")
-            self.assertFalse(result["comparison_eligible"])
 
 
 if __name__ == "__main__":

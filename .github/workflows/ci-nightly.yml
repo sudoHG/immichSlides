@@ -3,10 +3,6 @@ run-name: >-
   ci-nightly ${{ github.event_name == 'workflow_dispatch' && ((inputs.shard != '' || inputs.live_only || inputs.ui_only || inputs.strict_only || inputs.probe_environment_refusal) && 'diagnostic' || 'full') || github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || 'scheduled' }}
 
 on:
-  schedule:
-    # Primary: 14:07 UTC / 22:07 Beijing; backup: 19:07 UTC / 03:07 Beijing the next day.
-    - cron: '7 14 * * *'
-    - cron: '7 19 * * *'
   workflow_dispatch:
     inputs:
       shard:
@@ -34,23 +30,6 @@ on:
         required: false
         default: false
         type: boolean
-  pull_request:
-    paths:
-      - .github/workflows/ci-nightly.yml
-      - scripts/ci_nightly.py
-      - scripts/ci_nightly_change.py
-      - scripts/ci_nightly_ui.py
-      - scripts/ci_ui_tests.py
-      - scripts/ci_simulator.py
-      - scripts/ci-ui-shards.json
-      - scripts/nightly-*.json
-      - scripts/run_strict_ci_tracer.py
-      - scripts/ci_live_tests.py
-      - scripts/ci_build_archive.py
-      - scripts/ci_unit_tests.py
-      - scripts/ci_review_packages.py
-      - scripts/p2-review.html
-      - scripts/p2-motion-review.html
 
 permissions:
   contents: read

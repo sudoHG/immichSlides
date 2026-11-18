@@ -1,27 +1,22 @@
 name: ci-smoke-shadow
 
 on:
-  workflow_run:
-    workflows: [ci-nightly]
-    branches: [main]
-    types: [completed]
+  schedule:
+    - cron: '7 14 * * *'
   workflow_dispatch:
     inputs:
-      nightly_run_id:
-        description: Completed main ci-nightly run to compare at its head SHA
+      scope:
+        description: Smoke flow scope
         required: true
-        type: string
+        default: core
+        type: choice
+        options: [core, full]
 
 permissions: {}
 
 concurrency:
   group: >-
-    ${{ (github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' ||
-    (github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository &&
-    github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.path == '.github/workflows/ci-nightly.yml' &&
-    github.event.workflow_run.status == 'completed' && (github.event.workflow_run.event == 'schedule' ||
-    (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.display_title == 'ci-nightly full'))))) &&
-    (github.event_name != 'workflow_run' || contains(fromJSON('["failure","success"]'), github.event.workflow_run.conclusion)) &&
+    ${{ (github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) &&
     'ci-smoke-shadow' || format('ci-smoke-shadow-rejected-{0}', github.run_id) }}
   cancel-in-progress: false
 
@@ -29,12 +24,7 @@ jobs:
   plan:
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.path == '.github/workflows/ci-nightly.yml' &&
-      github.event.workflow_run.status == 'completed' &&
-      (github.event.workflow_run.event == 'schedule' ||
-      (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.display_title == 'ci-nightly full'))))
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -45,18 +35,20 @@ jobs:
       head_sha: ${{ steps.plan.outputs.head_sha }}
       control_sha: ${{ steps.plan.outputs.control_sha }}
       execute: ${{ steps.plan.outputs.execute }}
+      ios_debug: ${{ steps.plan.outputs.ios_debug }}
+      ios_release: ${{ steps.plan.outputs.ios_release }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Reject private configuration and install the pinned reader environment
         run: /usr/bin/python3 -B scripts/ci_smoke_shadow.py setup
-      - name: Bind the completed nightly and enumerate manifest groups
+      - name: Select the scope and skip already-tested scheduled heads
         id: plan
         env:
-          SMOKE_NIGHTLY_RUN_ID: ${{ inputs.nightly_run_id }}
+          SMOKE_SCOPE: ${{ inputs.scope || 'core' }}
           SMOKE_TOKEN: ${{ github.token }}
         run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B scripts/ci_smoke_shadow.py plan-shared'
       - name: Publish this first attempt's immutable plan
@@ -70,7 +62,7 @@ jobs:
 
   ios-debug:
     needs: plan
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.ios_debug == 'true' }}
     name: smoke-shadow-ios-debug
     runs-on: xcode-27
     timeout-minutes: 30
@@ -96,7 +88,7 @@ jobs:
           persist-credentials: false
       - name: Reject private configuration and verify pinned tools
         run: /usr/bin/python3 -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" setup
-      - name: Download only this shadow attempt's plan as data
+      - name: Download only this smoke attempt's plan as data
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: smoke-shadow-plan-${{ github.run_id }}-${{ github.run_attempt }}
@@ -141,7 +133,7 @@ jobs:
 
   ios-release:
     needs: plan
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.ios_release == 'true' }}
     name: smoke-shadow-ios-release
     runs-on: xcode-27
     timeout-minutes: 30
@@ -167,7 +159,7 @@ jobs:
           persist-credentials: false
       - name: Reject private configuration and verify pinned tools
         run: /usr/bin/python3 -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" setup
-      - name: Download only this shadow attempt's plan as data
+      - name: Download only this smoke attempt's plan as data
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: smoke-shadow-plan-${{ github.run_id }}-${{ github.run_attempt }}
@@ -240,7 +232,7 @@ jobs:
       - name: Reject private configuration and verify pinned tools
         id: setup
         run: /usr/bin/python3 -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" setup
-      - name: Download only this shadow attempt's plan as data
+      - name: Download only this smoke attempt's plan as data
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: smoke-shadow-plan-${{ github.run_id }}-${{ github.run_attempt }}
@@ -320,7 +312,7 @@ jobs:
         with:
           pattern: smoke-shadow-producer-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-artifacts/smoke-producers
-      - name: Require every raw result and write the comparison table
+      - name: Require every selected first result
         id: aggregate
         if: always()
         env:
@@ -329,7 +321,7 @@ jobs:
           SMOKE_RELEASE_RESULT: ${{ needs.ios-release.result }}
           SMOKE_TOKEN: ${{ github.token }}
         run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B scripts/ci_smoke_shadow.py aggregate'
-      - name: Publish the scanned comparison record for 90 days
+      - name: Publish the scanned smoke result
         if: always() && steps.aggregate.outputs.records_safe == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

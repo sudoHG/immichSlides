@@ -52,7 +52,11 @@ There is no compile fallback. Local build/pack timings do not measure hosted upl
 or transfer latency. Use the workspace heavy/device-slot/watchdog wrappers and
 80 GiB disk gate; dispose owned inputs only after their holder checks succeed.
 
-Configuration is explicit. A selection runs every matching flow in manifest order;
+Configuration is explicit. `--smoke-scope full` (the local default) selects all
+23 manifest flows; `--smoke-scope core` selects the seven daily flows defined beside
+`FLOW_METHODS` in `strict_e2e_smoke.py`. The selected device/configuration runs its
+members of that scope in manifest order. See [the nightly scopes](CI_NIGHTLY.md#standalone-smoke-nightly).
+An invocation runs every matching flow in manifest order;
 an empty selection fails. Without explicit warm-up/reuse the runner builds once in
 disposable DerivedData. Reuse retains the strict signed Products/source identity checks.
 Smoke uses the existing UI-only `settings-resume` scheme with the explicitly requested
