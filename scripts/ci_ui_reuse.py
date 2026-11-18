@@ -104,23 +104,6 @@ def validate_reuse(receipt, push, inputs, shards, pins, upstream, merged_pr):
     return receipt
 
 
-def make_verdict(record, run, summaries, evaluation):
-    source = evaluation.get("source")
-    if (evaluation["state"] != "success" or not source or run["path"] != UI_WORKFLOW
-            or record["identity"]["event"] != "pull_request" or evaluation.get("ui_population_mode", "full") != "full"):
-        return None
-    ui = [summary for summary in summaries if summary["run"]["tier"] == "ui"]
-    if not ui:
-        return None
-    # Evaluation has already checked every GitHub job and the full admitted
-    # declared/compiled/observed union. The receipt is emitted only by main.
-    return {"schema_version": 1, "identity": record["identity"], "status": "passed",
-            "source": dict(source, ci_changing=record["classification"]["ci_changing"]),
-            "inputs": reuse_inputs(record["identity"]["base_sha"]),
-            "device_shards": sorted(summary["run"]["job"].removeprefix("ui-") + "/" + summary["run"]["shard"] for summary in ui),
-            "toolchains": {summary["run"]["job"].removeprefix("ui-") + "/" + summary["run"]["shard"]: summary["toolchain"] for summary in ui}}
-
-
 def trusted_uploader(api, artifact, workflow):
     from ci_publish import positive
     run = api.repo(f"actions/runs/{positive(artifact['workflow_run']['id'])}")

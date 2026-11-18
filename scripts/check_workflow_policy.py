@@ -72,7 +72,7 @@ PROBE_ENVIRONMENT = {
 WORKFLOW_RUN_SOURCES = {
     SHADOW_WORKFLOW: {"ci-nightly"},
     XCC_DISPATCH_WORKFLOW: {"ci-ui", "ci-xcode-cloud-route"},
-    ".github/workflows/ci-publish.yml": {"ci-gate", "ci-ui"},
+    ".github/workflows/ci-publish.yml": {"ci-gate"},
     REPORT_WORKFLOW: {"ci-nightly", "ci-gate", "ci-ui"},
 }
 # Main pushes share one first-attempt queue (superseding only pending runs); pull requests cancel
@@ -1113,12 +1113,9 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
             continue
         publisher_upload = (path == ".github/workflows/ci-publish.yml"
                             and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-                            and options in ({"name": "ci-admission-${{ steps.admit.outputs.run_id }}",
-                                             "path": "${{ runner.temp }}/ci-admission/record.json",
-                                             "if-no-files-found": "error", "retention-days": 30},
-                                            {"name": "ci-ui-verdict-${{ steps.publish.outputs.ui_verdict_tree }}",
-                                             "path": "${{ runner.temp }}/ci-ui-verdict/verdict.json",
-                                             "if-no-files-found": "error", "retention-days": 30}))
+                            and options == {"name": "ci-admission-${{ steps.admit.outputs.run_id }}",
+                                            "path": "${{ runner.temp }}/ci-admission/record.json",
+                                            "if-no-files-found": "error", "retention-days": 30})
         role = "import" if path == XCC_IMPORT_WORKFLOW else "route"
         xcc_upload = (path in XCC_WORKFLOWS and uses == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
                       and options == {"name": "ci-xcc-" + role + "-${{ steps." + role + ".outputs.producer_run_id }}-${{ steps." + role + ".outputs.producer_attempt }}-${{ inputs.group }}",

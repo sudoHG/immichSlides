@@ -1913,6 +1913,10 @@ bounded shutdown wait; a blocked stack-log write cannot block test execution.
 
 ## Current workflow boundary
 
+PR publication depends only on `ci-gate`; it never waits for a UI run. `ci-ui`,
+`ci-strict-tracer` and `ci-p2-review` are manual-only pending legacy removal.
+Historical UI summary records and main-push reporting remain readable.
+
 `ci-gate` runs both host partitions on PR merge commits and pushes to main. Each has read-only
 contents permission, bounded job/script budgets, PR-specific cancellation (main pushes replace only a pending run, see [coalescing](CI_PUBLISHER.md#main-push-coalescing)), and no
 secrets or status-writing identity. It uploads only `summary.json`, `summary.md` and

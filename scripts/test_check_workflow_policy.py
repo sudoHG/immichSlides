@@ -944,27 +944,12 @@ final class LocaleUITests: XCTestCase {
                     job["environment"] = "test-server"
                 self.assertIn("live-credential", self.rules(changed, path))
 
-    def test_ui_verdict_upload_is_limited_to_the_exact_publisher_output(self):
-        document = self.trusted()
-        upload = {"uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
-                  "with": {"name": "ci-ui-verdict-${{ steps.publish.outputs.ui_verdict_tree }}",
-                           "path": "${{ runner.temp }}/ci-ui-verdict/verdict.json",
-                           "if-no-files-found": "error", "retention-days": 30}}
-        document["jobs"]["check"]["steps"].append(upload)
-        self.assertNotIn("trusted-action", self.rules(document, TRUSTED))
-        for key, value in (("path", "${{ runner.temp }}/**"), ("retention-days", 90),
-                           ("name", "ci-ui-verdict-${{ github.sha }}")):
-            bad = copy.deepcopy(document)
-            bad["jobs"]["check"]["steps"][-1]["with"][key] = value
-            with self.subTest(key=key):
-                self.assertIn("trusted-action", self.rules(bad, TRUSTED))
-
     def rules(self, document, path=".github/workflows/example.yml", **options):
         return {item.rule for item in policy.check_workflow(path, yaml.safe_dump(document), **options)}
 
     def trusted(self):
         document = workflow()
-        document["on"] = {"workflow_run": {"workflows": ["ci-gate", "ci-ui"],
+        document["on"] = {"workflow_run": {"workflows": ["ci-gate"],
                                            "types": ["requested", "in_progress", "completed"]}}
         document["jobs"]["check"]["steps"][0]["with"] = {"ref": "main"}
         document["jobs"]["check"]["runs-on"] = "ubuntu-24.04"
@@ -1169,11 +1154,11 @@ final class LocaleUITests: XCTestCase {
         self.assertNotIn("workflow-run", self.rules(document, ".github/workflows/ci-report.yml"))
 
     def test_run_named_producers_cannot_be_selected_by_workflow_run_name(self):
-        options = {"run_named_workflows": {"ci-ui"}}
-        for condition in ("github.event.workflow_run.name == 'ci-ui'", "'ci-ui' == github.event.workflow_run.name",
-                          "contains(fromJSON('[\"ci-ui\"]'), github.event.workflow_run.name)",
-                          "github.event.workflow_run['name'] == 'ci-ui'",
-                          "github['event']['workflow_run']['name'] == 'ci-ui'"):
+        options = {"run_named_workflows": {"ci-gate"}}
+        for condition in ("github.event.workflow_run.name == 'ci-gate'", "'ci-gate' == github.event.workflow_run.name",
+                          "contains(fromJSON('[\"ci-gate\"]'), github.event.workflow_run.name)",
+                          "github.event.workflow_run['name'] == 'ci-gate'",
+                          "github['event']['workflow_run']['name'] == 'ci-gate'"):
             for location in ("job", "step", "env"):
                 with self.subTest(condition=condition, location=location):
                     document = self.trusted()
@@ -1186,12 +1171,12 @@ final class LocaleUITests: XCTestCase {
                         document["env"] = {"SELECTED": "${{ " + condition + " }}"}
                     self.assertIn("workflow-run-name", self.rules(document, TRUSTED, **options))
         document = self.trusted()
-        document["jobs"]["check"]["if"] = "github.event.workflow_run.path == '.github/workflows/ci-ui.yml'"
+        document["jobs"]["check"]["if"] = "github.event.workflow_run.path == '.github/workflows/ci-gate.yml'"
         self.assertNotIn("workflow-run-name", self.rules(document, TRUSTED, **options))
-        document["jobs"]["check"]["if"] = "github.event.workflow_run.name == 'ci-ui'"
+        document["jobs"]["check"]["if"] = "github.event.workflow_run.name == 'ci-gate'"
         self.assertNotIn("workflow-run-name", self.rules(document, TRUSTED, run_named_workflows={"unrelated"}))
         self.assertNotIn("workflow-run-name", self.rules(document, TRUSTED))
-        document["jobs"]["check"]["if"] = "github.event.workflow_run.path == '.github/workflows/ci-ui.yml'"
+        document["jobs"]["check"]["if"] = "github.event.workflow_run.path == '.github/workflows/ci-gate.yml'"
         document["jobs"]["check"]["name"] = "${{ github.event.workflow_run.name }}"
         self.assertNotIn("workflow-run-name", self.rules(document, TRUSTED, **options))
 
@@ -1202,10 +1187,10 @@ final class LocaleUITests: XCTestCase {
             workflows = root / ".github/workflows"
             workflows.mkdir(parents=True)
             producer = workflow()
-            producer.update({"name": "ci-ui", "run-name": "UI run ${{ github.run_id }}"})
+            producer.update({"name": "ci-gate", "run-name": "Gate run ${{ github.run_id }}"})
             (workflows / "producer.yaml").write_text(yaml.safe_dump(producer))
             document = self.trusted()
-            document["jobs"]["check"]["if"] = "github.event.workflow_run.name == 'ci-ui'"
+            document["jobs"]["check"]["if"] = "github.event.workflow_run.name == 'ci-gate'"
             (workflows / "ci-publish.yml").write_text(yaml.safe_dump(document))
             output = io.StringIO()
             with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):

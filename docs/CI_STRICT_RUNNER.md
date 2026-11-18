@@ -210,8 +210,8 @@ assertions elsewhere. Retiring rule assertions requires mutation-proven replacem
 coverage and the separately reviewed execution switch; verdict contracts stay unchanged.
 
 The informational `ci-strict-tracer` workflow runs on the [pinned hosted toolchain](CI_TOOLCHAIN.md)
-only for pull requests touching its workflow, strict runner modules/tests or tracer
-manifest, and through `workflow_dispatch`. Other PRs and main pushes do not trigger it.
+only through `workflow_dispatch`, pending legacy workflow removal. Pull requests
+and main pushes do not trigger it.
 It covers an iPhone smoke suite,
 an Apple TV smoke suite, iPhone P2 rotation with recording, and the dual-server
 `filter-switch` suite. [`strict-tracer.json`](../scripts/strict-tracer.json) is only

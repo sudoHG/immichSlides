@@ -1,5 +1,12 @@
 # UI tier: iPhone, iPad and Apple TV
 
+`ci-ui` is now manual-only (`workflow_dispatch`), pending legacy workflow removal.
+It has no pull-request or main-push trigger. The publisher evaluates only `ci-gate`;
+missing UI runs do not delay or fail a PR verdict. The Xcode Cloud dispatcher still
+listens for `ci-ui` requested events, so it receives no automatic PR UI event.
+The execution, selection and reuse contracts below describe retained legacy tools
+and historical records; they do not schedule PR checks or authorize a release.
+
 The approved [target tiers](TESTING.md#approved-target-tiers-planning-only) move
 rules to deterministic App tests and visual material to human review, with 23
 short nightly smoke flows. The versioned
@@ -8,8 +15,8 @@ does not select or deselect UI tests. The populations and producer/reader protoc
 below are unaffected by the unit-coverage PRs. Duplicate-removal batch #721 is
 separate and retains its assertions in other tests; the future tier switch requires
 replacement coverage and shadow execution. No new yellow or retry exception is part of migration.
-The existing `functional_smoke` methods in `ci-ui-areas.json` retain their per-PR
-selection and explicit `pr-smoke` target tier, separate from the 23 nightly flows.
+The existing `functional_smoke` methods in `ci-ui-areas.json` retain their legacy
+selection and explicit `pr-smoke` inventory tier until bulk deletion.
 The planning file remains untrusted and must become CI-trusted before it selects tests.
 Review ownership is defined in [Testing conventions](TESTING.md#approved-target-tiers-planning-only).
 
@@ -23,17 +30,15 @@ This is an exact class rule, with no prefix, wildcard or method-name exemption.
 Their dedicated execution and default-plan exclusions are managed separately
 from the base-owned PR selection protocol.
 
-`ci-ui` runs on pull requests and pushes to `main`, independently of `ci-gate`.
-It is informational: only the [trusted publisher](CI_PUBLISHER.md) writes its
-commit status. No required check or repository setting changes here. All three
+The retained `ci-ui` jobs are unchanged and can be requested manually.
+It is informational and no longer receives a [publisher](CI_PUBLISHER.md) commit
+status. No required check or repository setting changes here. All three
 devices use the same archive validation, fixture runner, selection and verdict
 path. Packed functional selection was shipped reader first, then activated by the
 producer's explicit `--pack-scoped-ui` intent.
 
-Main pushes run the Linux selection jobs and keep the gate's build, unit and host
-checks. They run no UI shards: a trusted identical-tree PR verdict is reused, or UI
-verification is explicitly deferred to the complete nightly aggregate. Pull
-requests keep their fixture UI execution and archive selection.
+Main pushes keep the gate's build, unit and host checks. Neither main pushes nor
+pull requests schedule this workflow's UI selection, archive waits or fixture shards.
 
 ## Main UI scheduling contract
 
@@ -247,7 +252,7 @@ producer cannot substitute full evidence. Partial, mixed or extra populations fa
 Only independently empty selected shards may be unexecuted literal skips.
 Scoped success cannot supply a full post-merge reuse receipt.
 GitHub cannot skip one entry of a static matrix, so the reader accepts
-[bound dynamic shard lists](CI_PUBLISHER.md#bound-dynamic-ui-shards). The main Cloud
+[bound dynamic shard lists](#scheduling-the-selection). The main Cloud
 router keeps every group on GitHub while its reviewed registry is absent.
 [Grouped Cloud routing](XCODE_CLOUD_UI.md) uses the same functional selection
 after separate activation. Nightly and main push deferral retain their contracts;
@@ -265,7 +270,7 @@ The `ci-ui.yml` producer activates the reader's protocol with the literal
 The reader landed separately before this producer. Historical unflagged runs
 retain their original contract. No assertions, skips, deadlines or default plans change.
 
-The [acceleration reader](CI_PUBLISHER.md#prepared-scoped-ui-acceleration-reader)
+The [retained acceleration reader](../scripts/ci_publish_git.py)
 landed before the producer's `--scoped-ui-v2` and
 `--compiled-from-official-results` activation. Eligible scoped PR shards discover
 compiled methods from the first official test result instead of starting a
@@ -348,13 +353,13 @@ UI summary to carry the same `hashes.manifests.ui-scoped-plan` hash. Declared,
 compiled and observed identities must equal the base plan for that job. An active
 packed run cannot substitute legacy full-shard evidence; empty platforms still
 declare their devices and admit only an unexecuted collapsed matrix skip. See
-[publisher validation](CI_PUBLISHER.md#packed-scoped-ui-protocol).
+[retained validation](../scripts/ci_publish_git.py).
 The producer publishes this plan, carries its exact per-job selectors,
 and avoids waiting for or downloading an unselected platform's gate archive.
 Archive identity and signature checks remain mandatory for every selected platform.
 An earlier build with a different head/base/tree cannot supply a cache shortcut.
 
-The [acceleration reader](CI_PUBLISHER.md#prepared-scoped-ui-acceleration-reader)
+The [retained acceleration reader](../scripts/ci_publish_git.py)
 requires official-result discovery intent on every shard command before admitting
 `capacity-v2`. A shard with an approved base fixture deselection keeps version 1
 and preliminary enumeration. Base policy controls only this protocol eligibility;
