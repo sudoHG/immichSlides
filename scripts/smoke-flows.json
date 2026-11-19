@@ -1,5 +1,14 @@
 {
   "schema_version": 1,
+  "core_flow_ids": [
+    "ipad-rotation",
+    "iphone-first-boot",
+    "tv-background-return",
+    "tv-first-boot",
+    "tv-pause-resume",
+    "tv-playback-controls",
+    "tv-server-switch"
+  ],
   "flows": [
     {
       "id": "iphone-album-selection",

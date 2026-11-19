@@ -36,15 +36,10 @@ HOST_CHECKS = [
     ("localization catalog", [sys.executable, "scripts/validate_localization_catalog.py"]),
     ("localization usage", [sys.executable, "scripts/scan_chinese_strings.py", "--limit", "20"]),
     ("Python test prerequisites", [sys.executable, "scripts/check_required_test_tools.py"]),
-    ("workflow policy", [sys.executable, "scripts/check_workflow_policy.py", "--check-ui-shards"]),
-    ("known-flaky registry", [sys.executable, "scripts/ci_flaky.py"]),
-    ("Xcode Cloud UI contract", [sys.executable, "scripts/check_xcode_cloud_ui.py"]),
+    ("workflow policy", [sys.executable, "scripts/check_workflow_policy.py"]),
     ("python tests", [sys.executable, "-B", "scripts/run_python_tests.py"]),
 ]
-MACOS_PYTHON_TESTS = frozenset({
-    "test_strict_e2e_filter_contract.DisplayPolicyVisualContractTests.test_swift_capture_candidate_recognizes_public_fit_without_rewriting_evidence",
-    "test_strict_e2e_photo_identity.IOSVisualIdentityJSONEncodingTests.test_nil_mark_is_valid_json_object",
-})
+MACOS_PYTHON_TESTS = frozenset()
 
 
 def python_shard_populations(population, weights):

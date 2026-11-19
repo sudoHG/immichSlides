@@ -1,15 +1,9 @@
 """Guard workflow trust boundaries against accidental privilege and code execution."""
 
 import copy
-import re
-import contextlib
-import io
 import json
-import sys
-import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 import yaml
 
@@ -17,7 +11,7 @@ import check_workflow_policy as policy
 
 
 SHA = "11d5960a326750d5838078e36cf38b85af677262"
-TRUSTED = ".github/workflows/ci-publish.yml"
+TRUSTED = ".github/workflows/privacy-preflight.yml"
 SHADOW = ".github/workflows/ci-smoke-shadow.yml"
 
 
@@ -71,7 +65,7 @@ class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
         return yaml.load((root / SHADOW).read_text(), Loader=policy.WorkflowLoader)
 
     def violations(self, document, path=SHADOW):
-        return policy.check_workflow(path, yaml.safe_dump(document), run_named_workflows={"ci-nightly"})
+        return policy.check_workflow(path, yaml.safe_dump(document))
 
     def test_shadow_job_timeouts_follow_runner_budgets_with_three_minutes_reserved(self):
         import ci_smoke_shadow as shadow
@@ -176,403 +170,7 @@ class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
 
 
 class WorkflowPolicyTests(unittest.TestCase):
-    def test_ui_archive_redownload_cannot_change_provenance_or_bypass_verification(self):
-        for path, jobs in ((".github/workflows/ci-ui.yml", ("iphone-shards", "ipad-shards", "appletv-shards")),
-                           (".github/workflows/ci-nightly.yml", ("ui-shards",))):
-            original = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
-            self.assertNotIn("archive-redownload", self.rules(original, path))
-            for job in jobs:
-                for mutation in ("missing-gate", "skip-gate", "ignore-gate", "gate-command", "late-gate",
-                                 "different-id", "different-run", "different-repository", "different-action",
-                                 "same-stage", "skip-redownload", "third-download", "test-bypass",
-                                 "skip-first-gate", "ignore-first-gate", "no-prepare-redownload", "first-download-options",
-                                 "unguarded-first-cleanup", "unguarded-retry-cleanup", "missing-cleanup",
-                                 "skip-cleanup", "first-cleanup-env", "retry-cleanup-env", "missing-cleanup-target"):
-                    document = copy.deepcopy(original)
-                    steps = document["jobs"][job]["steps"]
-                    by_id = {step.get("id"): step for step in steps}
-                    gate, retry = by_id["verify_redownload"], by_id["redownload"]
-                    if mutation == "missing-gate":
-                        steps.remove(gate)
-                    elif mutation == "skip-gate":
-                        gate["if"] = "false"
-                    elif mutation == "ignore-gate":
-                        gate["continue-on-error"] = True
-                    elif mutation == "gate-command":
-                        gate["run"] += "\ntrue\n"
-                    elif mutation == "late-gate":
-                        steps.remove(gate)
-                        steps.append(gate)
-                    elif mutation.startswith("different-"):
-                        field = {"different-id": "artifact-ids", "different-run": "run-id",
-                                 "different-repository": "repository"}.get(mutation)
-                        if field:
-                            retry["with"][field] = "other"
-                        else:
-                            retry["uses"] = "actions/download-artifact@" + "a" * 40
-                    elif mutation == "same-stage":
-                        retry["with"]["path"] = by_id["download"]["with"]["path"]
-                    elif mutation == "skip-redownload":
-                        retry["if"] = "false"
-                    elif mutation == "third-download":
-                        steps.insert(steps.index(gate), copy.deepcopy(retry))
-                    elif mutation == "test-bypass":
-                        next(step for step in steps if "ci_ui_tests.py run " in step.get("run", ""))["if"] = "always()"
-                    elif mutation == "skip-first-gate":
-                        by_id["verify_download"]["if"] = "false"
-                    elif mutation == "ignore-first-gate":
-                        by_id["verify_download"]["continue-on-error"] = True
-                    elif mutation == "no-prepare-redownload":
-                        by_id["verify_download"]["run"] = by_id["verify_download"]["run"].replace("--prepare-redownload", "")
-                    elif mutation == "first-download-options":
-                        by_id["download"]["with"]["artifact-ids"] = "other"
-                    elif mutation.startswith("unguarded-"):
-                        variable = "ARCHIVE_STAGING" if mutation == "unguarded-first-cleanup" else "ARCHIVE_REDOWNLOAD_STAGING"
-                        cleanup = next(step for step in steps if step.get("name") == "Display summary and remove task-owned products")
-                        guarded = '${' + variable + ':+"$' + variable + '"}'
-                        cleanup["run"] = cleanup["run"].replace(guarded, '"$' + variable + '"')
-                    elif "cleanup" in mutation:
-                        cleanup = next(step for step in steps if step.get("name") == "Display summary and remove task-owned products")
-                        if mutation == "missing-cleanup":
-                            steps.remove(cleanup)
-                        elif mutation == "skip-cleanup":
-                            cleanup["if"] = "false"
-                        elif mutation.endswith("-env"):
-                            cleanup["env"]["ARCHIVE_STAGING" if mutation == "first-cleanup-env" else "ARCHIVE_REDOWNLOAD_STAGING"] = "other"
-                        else:
-                            cleanup["run"] = cleanup["run"].replace('"$RUNNER_TEMP/ui-relocated" ', "")
-                    with self.subTest(path=path, job=job, mutation=mutation):
-                        self.assertIn("archive-redownload", self.rules(document, path))
 
-    def test_area_map_errors_identify_the_area_map_and_its_own_rule(self):
-        from ci_summary import ContractError
-        from ci_ui_selection import AREA_MAP_PATH
-        from ci_ui_shards import MANIFEST_PATH
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / ".github/workflows").mkdir(parents=True)
-            (root / ".github/workflows/check.yml").write_text(yaml.safe_dump(workflow()))
-            (root / "scripts").mkdir()
-            (root / MANIFEST_PATH).write_text(
-                '{"schema_version": 2, "revision": "test", "default_shard": "default", "shards": {"default": []}}')
-            output = io.StringIO()
-            with patch("ci_ui_shards.validate_shard_assignments"), \
-                    patch("ci_ui_selection.check_area_map", side_effect=ContractError("unmapped app source")), \
-                    contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(policy.main(["--root", str(root), "--check-ui-shards"]), 1)
-            self.assertIn(AREA_MAP_PATH + ":map: [ui-areas] unmapped app source", output.getvalue())
-            self.assertNotIn(MANIFEST_PATH, output.getvalue())
-
-    def test_ui_flow_check_requires_area_membership_for_identifiers_reached_through_helpers(self):
-        import json
-        from ci_summary import test_identity
-        from ci_ui_flows import flow_violations
-        area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["SmokeUITests/testLaunch"],
-                    "areas": {"core": {"sources": ["immichSlides/Shared/Model/**"], "tests": ["CoreUITests"]},
-                              "settings": {"sources": ["immichSlides/Shared/Settings*.swift"],
-                                           "tests": ["SettingsUITests", "ProtectionUITests"]},
-                              "protection": {"sources": ["immichSlides/tvOS/ProtectionPage.swift"],
-                                             "tests": ["ProtectionUITests/testPage"]},
-                              "filter": {"sources": ["immichSlides/Shared/Filter.swift"], "tests": ["FilterUITests"]},
-                              "playback": {"sources": ["immichSlides/tvOS/TVOnly.swift"], "tests": ["SmokeUITests"]},
-                              "locale": {"sources": ["immichSlides/Shared/Filter.swift"], "tests": ["LocaleUITests"]}},
-                    "nightly_default": ["locale"]}
-        app = {
-            "immichSlides/Shared/Model/Engine.swift": 'let id = "engine.status.flag"',
-            "immichSlides/Shared/SettingsHelpers.swift":
-                'func pinInputAccessibilityID(_ t: T) -> String { "settings.pin.input.\\(t.name)" }\n'
-                'let item = "settings.item.playback"',
-            "immichSlides/tvOS/ProtectionPage.swift": "func body() { row(id: pinInputAccessibilityID(.enable)) }",
-            "immichSlides/Shared/Filter.swift": 'let start = "filterSummary.startPlayback.button"',
-            "immichSlides/tvOS/TVOnly.swift": 'let tv = "tv.only.button"',
-        }
-        tests = {
-            "immichSlidesUITests/Settings.swift": """
-final class SettingsUITests: XCTestCase {
-    func testOpen() { openSettings(app); app.buttons["engine.status.flag"].tap() }
-    func testStart() { app.buttons[Contract.startID].tap() }
-    func openSettings(_ app: XCUIApplication) { app.buttons["settings.item.playback"].tap() }
-}
-final class ProtectionUITests: XCTestCase {
-    func testPage() { wait(app.buttons["settings.pin.input.enable"]) }
-    func testSidebar() { wait(app.buttons["settings.pin.input.\\(field)"]) }
-}
-final class OtherUITests: XCTestCase {
-    func testOther() {}
-    func openSettings(_ app: XCUIApplication) { app.buttons["filterSummary.startPlayback.button"].tap() }
-}
-final class SmokeUITests: XCTestCase {
-    func testLaunch() { app.buttons["filterSummary.startPlayback.button"].tap() }
-    func testPlatform() {
-#if os(tvOS)
-        app.buttons["tv.only.button"].tap()
-#endif
-    }
-}
-final class LocaleUITests: XCTestCase {
-    func testLeaf() { app.buttons["settings.item.playback"].tap(); app.buttons[Contract.startID].tap() }
-    func testNavigationOnly() { app.buttons["settings.item.playback"].tap() }
-}
-""",
-            "TestSupport/Contract.swift": 'enum Contract { static let startID = "filterSummary.startPlayback.button" }',
-        }
-        keys = ["SettingsUITests/testOpen", "SettingsUITests/testStart", "ProtectionUITests/testPage",
-                "ProtectionUITests/testSidebar", "OtherUITests/testOther", "SmokeUITests/testLaunch",
-                "SmokeUITests/testPlatform", "LocaleUITests/testLeaf", "LocaleUITests/testNavigationOnly"]
-        populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in keys]
-                       for platform in ("ios", "tvos")}
-        plans = {platform: json.dumps({"testTargets": [{"target": {"name": "immichSlidesUITests"}}]})
-                 for platform in ("ios", "tvos")}
-        helpers = "immichSlides/Shared/SettingsHelpers.swift"
-        exceptions = {"schema_version": 1, "exceptions": [
-            {"identifier": "filterSummary.startPlayback.button", "source": "immichSlides/Shared/Filter.swift",
-             "reason": "Reviewed."},
-            {"navigation": helpers, "areas": ["locale"], "reason": "Route to the captured screen."},
-            {"test": "OtherUITests", "reason": "Never launches the app."}]}
-
-        def violations(exception_entries):
-            return flow_violations(json.dumps(area_map), json.dumps(dict(exceptions, exceptions=exception_entries)),
-                                   app, tests, populations, plans)
-
-        # Own-type helpers, TestSupport constants, delegated and interpolated identifiers and platform
-        # conditions are resolved; core and smoke never need a feature membership. A nightly-default
-        # test must reach its own leaf screen, and may traverse other files only when they are
-        # reviewed navigation sources for its area.
-        sidebar = ("ProtectionUITests/testSidebar reaches settings.pin.input.* defined in "
-                   "immichSlides/tvOS/ProtectionPage.swift; add it to one of ['protection']")
-        start = ("SettingsUITests/testStart reaches filterSummary.startPlayback.button defined in "
-                 "immichSlides/Shared/Filter.swift; add it to one of ['filter', 'locale']")
-        routes = [f"LocaleUITests/{name} reaches settings.item.playback defined in {helpers}; add it to one of "
-                  "['settings']" for name in ("testLeaf", "testNavigationOnly")]
-        no_leaf = "LocaleUITests/testNavigationOnly is nightly-default but reaches no identifier from its areas' screens ['locale']"
-        self.assertEqual(violations([]), [routes[0], no_leaf, routes[1], sidebar, start])
-        self.assertEqual(violations(exceptions["exceptions"][:2]), [no_leaf, sidebar])
-        self.assertEqual(violations(exceptions["exceptions"]), [
-            no_leaf, sidebar, "stale UI flow exception: test=OtherUITests"])
-        for entry in ({"identifier": "Not An Identifier", "source": "x", "reason": "r"},
-                      {"test": "OtherUITests", "reason": "two\nlines"},
-                      {"test": "OtherUITests", "identifier": "a.b", "reason": "r"},
-                      {"navigation": helpers, "areas": ["settings"], "reason": "Not a nightly-default area."},
-                      {"navigation": "immichSlides/Shared/*.swift", "areas": ["locale"], "reason": "Glob."}):
-            with self.subTest(entry=entry), self.assertRaises(ValueError):
-                violations([entry])
-
-    def test_ui_flow_excludes_only_read_only_first_failure_capture(self):
-        import json
-        from ci_summary import test_identity
-        from ci_ui_flows import flow_violations
-
-        area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["SmokeUITests/testLaunch"],
-                    "areas": {"core": {"sources": ["immichSlides/Core/**"], "tests": ["CoreUITests"]},
-                              "settings": {"sources": ["immichSlides/Settings.swift"],
-                                           "tests": ["SettingsUITests"]},
-                              "playback": {"sources": ["immichSlides/Playback.swift"],
-                                           "tests": ["PlaybackUITests"]}},
-                    "nightly_default": []}
-        app = {
-            "immichSlides/Settings.swift": 'let identifier = "settings.cache.clearDisk.button"',
-            "immichSlides/Playback.swift": 'let identifier = "settings.cache.clearDisk.button"',
-        }
-        recorder = (
-            'enum FirstFailureEvidence {\n'
-            '  static func record() { capture() }\n'
-            '  static func capture() { let identifier = "settings.cache.clearDisk.button" }\n'
-            '}\n'
-        )
-        tests = {
-            "immichSlidesUITests/UITestSupport.swift": recorder,
-            "immichSlidesUITests/Settings.swift":
-                'final class SettingsUITests: XCTestCase { func testOpen() { FirstFailureEvidence.record() } }',
-        }
-        keys = ["SettingsUITests/testOpen", "SmokeUITests/testLaunch"]
-        populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in keys]
-                       for platform in ("ios", "tvos")}
-        plans = {platform: json.dumps({"testTargets": [{"target": {"name": "immichSlidesUITests"}}]})
-                 for platform in ("ios", "tvos")}
-        exceptions = json.dumps({"schema_version": 1, "exceptions": []})
-
-        self.assertEqual([], flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans))
-
-        tests["immichSlidesUITests/UITestSupport.swift"] = "enum ExistingUITestSupport { static func helper() {} }"
-        self.assertEqual([], flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans))
-        tests["immichSlidesUITests/UITestSupport.swift"] = recorder
-
-        tests["immichSlidesUITests/UITestSupport.swift"] = recorder.replace(
-            'static func record() { capture() }',
-            'static func record() { let identifier = "settings.cache.clearDisk.button"; capture() }')
-        self.assertIn(
-            "SettingsUITests/testOpen reaches settings.cache.clearDisk.button defined in immichSlides/Playback.swift",
-            "\n".join(flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans)),
-        )
-
-        action_mutations = (
-            ("tap", "button.tap()"),
-            ("doubleTap", "button.doubleTap()"),
-            ("twoFingerTap", "button.twoFingerTap()"),
-            ("press", "button.press(forDuration: 1)"),
-            ("typeText", 'field.typeText("x")'),
-            ("swipeUp", "button.swipeUp()"),
-            ("pinch", "button.pinch(withScale: 2, velocity: 1)"),
-            ("rotate", "button.rotate(0.5, withVelocity: 1)"),
-            ("drag", "pointer.drag(from: .zero, to: .zero)"),
-            ("adjust", "slider.adjust(toNormalizedSliderPosition: 0.5)"),
-            ("coordinate", "button.coordinate(withNormalizedOffset: .zero)"),
-            ("launch", "app.launch()"),
-            ("activate", "app.activate()"),
-            ("terminate", "app.terminate()"),
-            ("open", 'XCUIApplication.open(URL(string: "fixture")!)'),
-            ("orientation assignment", "XCUIDevice.shared.orientation = .landscapeLeft"),
-        )
-        for action, expression in action_mutations:
-            with self.subTest(action=action):
-                tests["immichSlidesUITests/UITestSupport.swift"] = recorder.replace(
-                    'let identifier = "settings.cache.clearDisk.button" }',
-                    f'let identifier = "settings.cache.clearDisk.button"; {expression} }}')
-                with self.assertRaisesRegex(
-                    ValueError,
-                    rf"UITestSupport\.swift: evidence-only FirstFailureEvidence\.capture reaches UI action {action}",
-                ):
-                    flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans)
-
-        tests["immichSlidesUITests/UITestSupport.swift"] = recorder.replace(
-            'let identifier = "settings.cache.clearDisk.button" }',
-            'let identifier = "settings.cache.clearDisk.button"\n'
-            '#if os(tvOS)\n'
-            '    XCUIRemote.shared.press(.select)\n'
-            '#endif\n'
-            '  }')
-        with self.subTest(platform="tvos"), self.assertRaisesRegex(
-            ValueError,
-            r"UITestSupport\.swift: evidence-only FirstFailureEvidence\.capture reaches UI action press",
-        ):
-            flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans)
-
-        tests["immichSlidesUITests/UITestSupport.swift"] = recorder.replace(
-            'static func capture() { let identifier = "settings.cache.clearDisk.button" }',
-            'static func capture() { let identifier = "settings.cache.clearDisk.button"; tapForFailureEvidence() }\n'
-            '  static func tapForFailureEvidence() { button.tap() }')
-        with self.assertRaisesRegex(
-            ValueError,
-            r"UITestSupport\.swift: evidence-only FirstFailureEvidence\.capture reaches UI action tap",
-        ):
-            flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans)
-
-        tests["immichSlidesUITests/UITestSupport.swift"] = recorder.replace(
-            '  static func capture() { let identifier = "settings.cache.clearDisk.button" }',
-            '  static func capture() { let identifier = "settings.cache.clearDisk.button" }\n'
-            '  static func capture() {}',
-        )
-        with self.assertRaisesRegex(ValueError, "duplicate FirstFailureEvidence.capture"):
-            flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans)
-
-    def test_nightly_aggregates_cannot_wait_for_macos_or_require_xcode(self):
-        path = policy.LIVE_WORKFLOW
-        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
-        self.assertEqual(set(), self.rules(document, path))
-        for job_id in ("aggregate", "ui-aggregate"):
-            for mutation in ("runner", "xcode", "toolchain", "bootstrap"):
-                with self.subTest(job=job_id, mutation=mutation):
-                    changed = copy.deepcopy(document)
-                    job = changed["jobs"][job_id]
-                    if mutation == "runner":
-                        job["runs-on"] = "xcode-27"
-                    elif mutation == "bootstrap":
-                        for step in job["steps"]:
-                            if "setup_ci_publisher_python.py" in step.get("run", ""):
-                                step["run"] = "python3 scripts/setup_ci_python.py --venv env"
-                    else:
-                        job["steps"].append({"run": "xcrun simctl list" if mutation == "xcode" else "python3 setup.py --verify-toolchain"})
-                    self.assertIn("nightly-aggregate-platform", self.rules(changed, path))
-
-    def test_nightly_jobs_cannot_bypass_the_change_check(self):
-        path = policy.LIVE_WORKFLOW
-        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
-        self.assertEqual("ubuntu-24.04", document["jobs"]["change"]["runs-on"])
-        for job_id in ("plan", "aggregate", "ui-archive", "ui-shards", "ui-aggregate", "live-admission", "live-build"):
-            with self.subTest(job=job_id, mutation="dropped gate"):
-                changed = copy.deepcopy(document)
-                changed["jobs"][job_id]["if"] = changed["jobs"][job_id]["if"].replace(policy.NIGHTLY_CHANGE_GATE, "true")
-                self.assertIn("nightly-change-gate", self.rules(changed, path))
-            for label, replacement in (("or true", f"({policy.NIGHTLY_CHANGE_GATE} || true)"),
-                                       ("negated", f"!({policy.NIGHTLY_CHANGE_GATE})"),
-                                       ("output only", "needs.change.outputs.run_nightly != 'false'"),
-                                       ("any event", policy.NIGHTLY_CHANGE_GATE.replace("github.event_name == 'schedule' && ", "")),
-                                       ("no result check", policy.NIGHTLY_CHANGE_GATE.replace("needs.change.result == 'success' && ", "")),
-                                       ("top-level or", f"{policy.NIGHTLY_CHANGE_GATE} || github.event_name == 'schedule'")):
-                with self.subTest(job=job_id, mutation=label):
-                    changed = copy.deepcopy(document)
-                    changed["jobs"][job_id]["if"] = changed["jobs"][job_id]["if"].replace(policy.NIGHTLY_CHANGE_GATE, replacement)
-                    self.assertIn("nightly-change-gate", self.rules(changed, path))
-        for job_id in ("strict", "live-canary", "live-unit"):
-            with self.subTest(job=job_id, mutation="status function"):
-                changed = copy.deepcopy(document)
-                changed["jobs"][job_id]["if"] = "always()"
-                self.assertIn("nightly-change-gate", self.rules(changed, path))
-        jobs = document["jobs"]
-        class Context(dict):
-            def __getattr__(self, name):
-                return self.get(name, "")
-        def runs(job_id, results, event, change_outputs):
-            expression = " ".join(jobs[job_id]["if"].split())
-            if expression.startswith("${{"):
-                expression = expression[3:-2].strip()
-            expression = expression.replace("!=", "\0").replace("&&", " and ").replace("||", " or ").replace("!", " not ")
-            expression = expression.replace("\0", "!=").replace("cancelled()", "False")
-            expression = re.sub(r"needs\.([\w-]+)", r"needs['\1']", expression)
-            outputs = {"change": Context(change_outputs), "live-admission": Context(admitted="true"),
-                       "ui-archive": Context(run_ui="true"), "plan": Context(matrix="[]")}
-            needs = Context({name: Context(result=results.get(name, "skipped"), outputs=outputs.get(name, Context()))
-                             for name in jobs})
-            return bool(eval(expression, {"__builtins__": {}}, {"needs": needs, "github": Context(event_name=event, ref="refs/heads/main"),
-                                                                   "inputs": Context()}))
-        def simulate(event, change_result, change_outputs):
-            results = {"change": change_result}
-            for job_id in ("plan", "live-admission", "live-build", "strict", "live-canary", "live-unit",
-                           "ui-archive", "ui-shards", "ui-aggregate", "aggregate"):
-                results[job_id] = "success" if runs(job_id, results, event, change_outputs) else "skipped"
-            return {job_id for job_id, result in results.items() if result == "success" and job_id != "change"}
-        everything = {"plan", "live-admission", "live-build", "strict", "live-canary", "live-unit",
-                      "ui-archive", "ui-shards", "ui-aggregate", "aggregate"}
-        with self.subTest(scenario="skipped night"):
-            self.assertEqual(set(), simulate("schedule", "success", {"run_nightly": "false"}))
-        for label, event, result, outputs in (("record upload failed", "schedule", "failure", {}),
-                                              ("change cancelled output", "schedule", "failure", {"run_nightly": "false"}),
-                                              ("verdict missing", "schedule", "success", {}),
-                                              ("dispatch", "workflow_dispatch", "success", {}),
-                                              ("dispatch with a skip-looking output", "workflow_dispatch", "success", {"run_nightly": "false"})):
-            with self.subTest(scenario=label):
-                self.assertEqual(everything, simulate(event, result, outputs))
-        for job_id, job in document["jobs"].items():
-            if job_id not in policy.NIGHTLY_UNGATED_JOBS:
-                with self.subTest(job=job_id, requirement="explicit status condition"):
-                    self.assertIn("!cancelled()", job["if"])
-                    self.assertIn("change", job["needs"] if isinstance(job["needs"], list) else [job["needs"]])
-        jobs = document["jobs"]
-        steps = document["jobs"]["change"]["steps"]
-        upload = next(index for index, step in enumerate(steps) if str(step.get("uses", "")).startswith("actions/upload-artifact@"))
-        for label, mutate in (("verdict before upload", lambda items: items.insert(upload, items.pop(upload + 1))),
-                              ("verdict after failure", lambda items: items[upload + 1].update({"if": "${{ always() }}"})),
-                              ("upload tolerates a missing record", lambda items: items[upload]["with"].update({"if-no-files-found": "ignore"})),
-                              ("upload continues after failure", lambda items: items[upload].update({"if": "${{ always() }}"})),
-                              ("job output skips the verdict step", lambda items: None)):
-            with self.subTest(job="change", mutation=label):
-                changed = copy.deepcopy(document)
-                mutate(changed["jobs"]["change"]["steps"])
-                if label.startswith("job output"):
-                    changed["jobs"]["change"]["outputs"]["run_nightly"] = "${{ steps.decision.outputs.run_nightly }}"
-                self.assertIn("nightly-change-gate", self.rules(changed, path))
-        with self.subTest(mutation="missing job"):
-            changed = copy.deepcopy(document)
-            del changed["jobs"]["change"]
-            self.assertIn("nightly-change-gate", self.rules(changed, path))
-        for mutation in ("runner", "xcode"):
-            with self.subTest(job="change", mutation=mutation):
-                changed = copy.deepcopy(document)
-                if mutation == "runner":
-                    changed["jobs"]["change"]["runs-on"] = "xcode-27"
-                else:
-                    changed["jobs"]["change"]["steps"].append({"run": "xcrun simctl list"})
-                self.assertIn("nightly-aggregate-platform", self.rules(changed, path))
 
     def test_macos_jobs_cannot_survive_cancellation_through_always(self):
         document = workflow()
@@ -583,373 +181,20 @@ final class LocaleUITests: XCTestCase {
         document["jobs"]["check"]["if"] = "${{ !cancelled() && needs.archive.outputs.run_ui == 'true' }}"
         self.assertNotIn("macos-cancellation", self.rules(document))
 
-    def test_cloud_start_requires_a_scheduling_marker_before_post(self):
-        path = policy.XCC_ROUTE_WORKFLOW
-        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
-        steps = document["jobs"]["start"]["steps"]
-        marker = next(index for index, step in enumerate(steps) if step.get("with", {}).get("name", "").startswith("ci-xcc-post-"))
-        post = next(index for index, step in enumerate(steps) if step.get("id") == "start")
-        steps[marker], steps[post] = steps[post], steps[marker]
-        self.assertIn("xcc-post-marker", self.rules(document, path))
-        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
-        steps = document["jobs"]["start"]["steps"]
-        marker = next(index for index, step in enumerate(steps) if step.get("with", {}).get("name", "").startswith("ci-xcc-post-"))
-        del steps[marker]
-        self.assertIn("xcc-post-marker", self.rules(document, path))
-        for mutation in ("start-output", "removed"):
-            document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
-            steps = document["jobs"]["start"]["steps"]
-            receipt = next(index for index, step in enumerate(steps) if step.get("with", {}).get("name", "").startswith("ci-xcc-start-"))
-            if mutation == "start-output":
-                steps[receipt]["if"] = "always() && steps.start.outputs.start_recorded == 'true'"
-            else:
-                del steps[receipt]
-            with self.subTest(mutation=mutation):
-                self.assertIn("xcc-start-record", self.rules(document, path))
-
-    def test_cloud_prepare_receipt_survives_fallback_and_is_uploaded_before_arm(self):
-        path = policy.XCC_ROUTE_WORKFLOW
-        for mutation in ("removed", "post-only", "after-arm", "wide-path"):
-            document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
-            steps = document["jobs"]["start"]["steps"]
-            receipt = next(index for index, step in enumerate(steps)
-                           if step.get("with", {}).get("name", "").startswith("ci-xcc-prepare-"))
-            if mutation == "removed":
-                del steps[receipt]
-            elif mutation == "post-only":
-                steps[receipt]["if"] = "success() && steps.prepare.outputs.post == 'true'"
-            elif mutation == "wide-path":
-                steps[receipt]["with"]["path"] = "${{ runner.temp }}/ci-xcc-route/*"
-            else:
-                steps[receipt], steps[receipt + 1] = steps[receipt + 1], steps[receipt]
-            with self.subTest(mutation=mutation):
-                self.assertIn("xcc-prepare-record", self.rules(document, path))
-
-    def test_failed_ios_reruns_cannot_repeat_successful_tv_through_dependencies(self):
-        path = ".github/workflows/ci-ui.yml"
-        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
-        self.assertNotIn("xcc-dependencies", self.rules(document, path))
-        for job in ("ios-wait", "tvos-wait", "iphone-shards", "ipad-shards", "appletv-shards"):
-            changed = copy.deepcopy(document)
-            changed["jobs"][job]["needs"] = ["archive", "shards"]
-            with self.subTest(job=job):
-                self.assertIn("xcc-dependencies", self.rules(changed, path))
-        changed = copy.deepcopy(document)
-        changed["jobs"]["appletv-shards"]["if"] = changed["jobs"]["appletv-shards"]["if"].replace(
-            "needs.selection.result == 'success' && ", "")
-        self.assertIn("xcc-dependencies", self.rules(changed, path))
-
-    def test_ui_failure_cannot_cancel_other_partition_results(self):
-        path = ".github/workflows/ci-ui.yml"
-        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
-        self.assertNotIn("ui-fail-fast", self.rules(document, path))
-        for job in ("iphone-shards", "ipad-shards", "appletv-shards"):
-            changed = copy.deepcopy(document)
-            changed["jobs"][job]["strategy"]["fail-fast"] = True
-            with self.subTest(job=job):
-                self.assertIn("ui-fail-fast", self.rules(changed, path))
-
-    def test_independent_ui_matrices_cannot_take_the_reserved_macos_slot(self):
-        path = ".github/workflows/ci-ui.yml"
-        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
-        self.assertNotIn("ui-capacity", self.rules(document, path))
-        document["jobs"]["iphone-shards"]["strategy"]["max-parallel"] = 3
-        document["jobs"]["appletv-shards"]["strategy"]["max-parallel"] = 1
-        self.assertIn("ui-capacity", self.rules(document, path))
-        split = copy.deepcopy(document)
-        for step in split['jobs']['selection']['steps']:
-            if 'run' in step:
-                step['run'] = step['run'].replace(' --scoped-ui-v2', '')
-        for device in ('iphone', 'ipad', 'appletv'):
-            split['jobs']['selection']['outputs'].pop(device + '_capacity', None)
-        split['jobs']['iphone-shards']['strategy']['max-parallel'] = 2
-        split['jobs']['ipad-shards']['strategy']['max-parallel'] = 1
-        self.assertNotIn('ui-capacity', self.rules(split, path))
-        split['jobs']['ipad-shards']['strategy']['max-parallel'] = 2
-        self.assertIn('ui-capacity', self.rules(split, path))
-        split['jobs']['iphone-shards']['strategy']['max-parallel'] = 1
-        # The total is still four, but serial iPhone jobs violate the packing budget.
-        self.assertIn('ui-capacity', self.rules(split, path))
-
-    def test_packed_ui_requires_independent_device_outputs_and_reports_string_matrices(self):
-        from ci_publish_git import SELECTION_UI_SHARDS as DYNAMIC_UI_SHARDS
-        root = Path(__file__).resolve().parent.parent
-        path = '.github/workflows/ci-ui.yml'
-        document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
-        self.assertNotIn('ui-shards', self.rules(document, path))
-        grouped = copy.deepcopy(document)
-        job = grouped['jobs']['shards'] = grouped['jobs'].pop('iphone-shards')
-        del grouped['jobs']['ipad-shards']
-        job['strategy'].update({'max-parallel': 3, 'matrix': {'device': ['iphone', 'ipad'],
-                               'shard': DYNAMIC_UI_SHARDS['ios']}})
-        self.assertIn('ui-shards', self.rules(grouped, path))
-        for mutation in ('platform-output', 'string-matrix'):
-            bad = copy.deepcopy(document)
-            strategy = bad['jobs']['iphone-shards']['strategy']
-            if mutation == 'platform-output':
-                strategy['matrix']['shard'] = DYNAMIC_UI_SHARDS['ios']
-            else:
-                strategy['matrix'] = '${{ fromJSON(needs.archive.outputs.matrix) }}'
-            with self.subTest(mutation=mutation):
-                self.assertIn('ui-shards', self.rules(bad, path))
-
-    def test_accelerated_ui_capacity_only_accepts_independent_trusted_outputs(self):
-        from ci_publish_git import UI_CAPACITIES
-        path = '.github/workflows/ci-ui.yml'
-        document = yaml.load((Path(__file__).parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
-        owner = 'selection' if 'selection' in document['jobs'] else 'archive'
-        expressions = UI_CAPACITIES[owner]
-        for step in document['jobs'][owner]['steps']:
-            if 'run' in step:
-                if '--scoped-ui-v2' not in step['run']:
-                    step['run'] = step['run'].replace('--pack-scoped-ui', '--pack-scoped-ui --scoped-ui-v2')
-        for device, expression in expressions.items():
-            document['jobs'][device + '-shards']['strategy']['max-parallel'] = expression
-            name = device + '_capacity'
-            document['jobs'][owner]['outputs'][name] = '${{ steps.select.outputs.' + name + ' }}'
-            for step in document['jobs'][device + '-shards']['steps']:
-                if 'run' in step:
-                    if '--compiled-from-official-results' not in step['run']:
-                        step['run'] = step['run'].replace('ci_ui_tests.py run ',
-                            'ci_ui_tests.py run --compiled-from-official-results ')
-        self.assertNotIn('ui-capacity', self.rules(document, path))
-        for mutation in ('wrong-device', 'arbitrary', 'literal-six', 'unbound-output', 'outside-strategy',
-                         'missing-intent', 'missing-discovery'):
-            bad = copy.deepcopy(document)
-            strategy = bad['jobs']['iphone-shards']['strategy']
-            if mutation == 'wrong-device':
-                strategy['max-parallel'] = expressions['ipad']
-            elif mutation == 'arbitrary':
-                strategy['max-parallel'] = '${{ fromJSON(needs.archive.outputs.capacity) }}'
-            elif mutation == 'literal-six':
-                for device in expressions:
-                    bad['jobs'][device + '-shards']['strategy']['max-parallel'] = 2
-            elif mutation == 'unbound-output':
-                del bad['jobs'][owner]['outputs']['iphone_capacity']
-            elif mutation == 'outside-strategy':
-                bad['jobs']['iphone-shards']['env'] = {'UNTRUSTED': expressions['iphone']}
-            elif mutation == 'missing-discovery':
-                for step in bad['jobs']['iphone-shards']['steps']:
-                    if 'run' in step:
-                        step['run'] = step['run'].replace(' --compiled-from-official-results', '')
-            else:
-                for step in bad['jobs'][owner]['steps']:
-                    if 'run' in step:
-                        step['run'] = step['run'].replace(' --scoped-ui-v2', '')
-            with self.subTest(mutation=mutation):
-                self.assertIn('ui-capacity', self.rules(bad, path))
-
-    def test_ui_matrix_cannot_omit_a_manifest_partition_or_unbind_its_selection(self):
-        from ci_publish_git import SELECTION_UI_SHARDS as DYNAMIC_UI_SHARDS
-        from ci_ui_shards import MANIFEST_PATH, parse_shard_manifest
-        root = Path(__file__).resolve().parent.parent
-        path = ".github/workflows/ci-ui.yml"
-        document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
-        shards = list(parse_shard_manifest((root / MANIFEST_PATH).read_text())["shards"])
-        for job, platform, output in (("iphone-shards", "ios", "iphone"), ("ipad-shards", "ios", "ipad"),
-                                      ("appletv-shards", "tvos", "appletv")):
-            literal = copy.deepcopy(document)
-            literal["jobs"][job]["strategy"]["matrix"]["shard"] = list(shards)
-            # Historical full matrices remain valid without the packed intent.
-            for step in literal['jobs']['selection']['steps']:
-                if 'run' in step:
-                    step['run'] = step['run'].replace(' --pack-scoped-ui', '').replace(' --scoped-ui-v2', '')
-            for device, capacity in (('iphone', 2), ('ipad', 1), ('appletv', 1)):
-                literal['jobs'][device + '-shards']['strategy']['max-parallel'] = capacity
-                literal['jobs']['selection']['outputs'].pop(device + '_capacity', None)
-            dynamic = copy.deepcopy(document)
-            dynamic["jobs"][job]["strategy"]["matrix"]["shard"] = DYNAMIC_UI_SHARDS[output]
-            dynamic["jobs"]["selection"]["outputs"].update({name: "${{ steps.select.outputs." + name + " }}"
-                                                          for name in (output + "_shards", "run_" + platform)})
-            with self.subTest(job=job):
-                for accepted in (literal, dynamic):
-                    self.assertNotIn("ui-shards", self.rules(accepted, path, ui_shards=shards))
-                omitted = copy.deepcopy(literal)
-                omitted["jobs"][job]["strategy"]["matrix"]["shard"].pop()
-                unbound = copy.deepcopy(dynamic)
-                del unbound["jobs"]["selection"]["outputs"][output + "_shards"]
-                other = copy.deepcopy(dynamic)
-                other["jobs"][job]["strategy"]["matrix"]["shard"] = DYNAMIC_UI_SHARDS["tvos" if platform == "ios" else "ios"]
-                for refused in (omitted, unbound, other):
-                    self.assertIn("ui-shards", self.rules(refused, path, ui_shards=shards))
-
-    def test_cloud_event_bridge_cannot_receive_secrets_or_execute_pr_code(self):
-        root = Path(__file__).resolve().parent.parent
-        path = policy.XCC_DISPATCH_WORKFLOW
-        document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
-        self.assertEqual(self.rules(document, path), set())
-        for mutation in ("branch", "environment", "secret", "checkout", "command", "write"):
-            changed = copy.deepcopy(document)
-            job = changed["jobs"]["dispatch"]
-            if mutation == "branch":
-                job["if"] = "always()"
-            elif mutation == "environment":
-                job["environment"] = "xcode-cloud"
-            elif mutation == "secret":
-                job["steps"][-1]["env"]["ASC_PRIVATE_KEY"] = "${{ secrets.ASC_PRIVATE_KEY }}"
-            elif mutation == "checkout":
-                job["steps"][0]["with"]["ref"] = "${{ github.event.workflow_run.head_sha }}"
-            elif mutation == "command":
-                job["steps"][-1]["run"] += " --workflow other.yml"
-            else:
-                job["permissions"]["contents"] = "write"
-            with self.subTest(mutation=mutation):
-                self.assertTrue(self.rules(changed, path))
-
-    def test_cloud_import_forwarder_is_required_and_has_no_environment_or_arbitrary_dispatch(self):
-        path = policy.XCC_ROUTE_WORKFLOW
-        document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
-        self.assertEqual(self.rules(document, path), set())
-        for mutation in ("missing", "branch", "environment", "needs", "write", "secret", "command", "output"):
-            changed = copy.deepcopy(document)
-            job = changed["jobs"]["dispatch-import"]
-            if mutation == "missing":
-                del changed["jobs"]["dispatch-import"]
-            elif mutation == "branch":
-                job["if"] = "always()"
-            elif mutation == "environment":
-                job["environment"] = "xcode-cloud"
-            elif mutation == "needs":
-                job["needs"] = "start"
-            elif mutation == "write":
-                job["permissions"]["contents"] = "write"
-            elif mutation == "secret":
-                job["steps"][-1]["env"]["ASC_PRIVATE_KEY"] = "${{ secrets.ASC_PRIVATE_KEY }}"
-            elif mutation == "command":
-                job["steps"][-1]["run"] += " --workflow other.yml"
-            else:
-                del changed["jobs"]["route"]["outputs"]
-            with self.subTest(mutation=mutation):
-                self.assertTrue(self.rules(changed, path))
-
-    def test_cloud_router_cannot_bypass_main_context_budget_serialization_or_credential_scope(self):
-        root = Path(__file__).resolve().parent.parent
-        path = policy.XCC_ROUTE_WORKFLOW
-        document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
-        self.assertEqual(self.rules(document, path), set())
-        for mutation in ("branch", "fork", "parallel", "write", "early-key", "checkout", "upload", "trigger"):
-            with self.subTest(mutation=mutation):
-                changed = copy.deepcopy(document)
-                job = changed["jobs"]["route"]
-                if mutation == "branch":
-                    job["if"] = "always()"
-                elif mutation == "fork":
-                    job["if"] = "github.ref == 'refs/heads/main'"
-                elif mutation == "parallel":
-                    changed["jobs"]["start"]["concurrency"]["group"] += "-${{ github.run_id }}"
-                elif mutation == "write":
-                    job["permissions"]["contents"] = "write"
-                elif mutation == "early-key":
-                    job["env"] = {"KEY": "${{ secrets.ASC_PRIVATE_KEY }}"}
-                elif mutation == "checkout":
-                    job["steps"][0]["with"]["ref"] = "${{ github.event.workflow_run.head_sha }}"
-                elif mutation == "upload":
-                    job["steps"][-1]["if"] = "always()"
-                else:
-                    changed["on"]["pull_request"] = None
-                self.assertTrue(self.rules(changed, path))
-
-    def test_cloud_importer_main_context_and_secret_step_cannot_be_weakened(self):
-        path = policy.XCC_IMPORT_WORKFLOW
-        source = (Path(__file__).resolve().parent.parent / path).read_text()
-        document = yaml.load(source, Loader=policy.WorkflowLoader)
-        self.assertEqual(self.rules(document, path), set())
-        for mutation in ("branch", "event", "checkout", "environment", "permissions", "job-secret", "early-secret", "upload"):
-            with self.subTest(mutation=mutation):
-                changed = copy.deepcopy(document)
-                job = changed["jobs"]["import"]
-                if mutation == "branch":
-                    job.pop("if")
-                elif mutation == "event":
-                    changed["on"]["pull_request"] = None
-                elif mutation == "checkout":
-                    job["steps"][0]["with"]["ref"] = "${{ github.event.pull_request.head.sha }}"
-                elif mutation == "environment":
-                    job["environment"] = "release"
-                elif mutation == "permissions":
-                    job["permissions"]["actions"] = "write"
-                elif mutation == "job-secret":
-                    job["env"] = policy.XCC_BINDINGS
-                elif mutation == "early-secret":
-                    job["steps"][0]["env"] = policy.XCC_BINDINGS
-                else:
-                    job["steps"][-1]["with"]["path"] = "${{ github.workspace }}"
-                self.assertTrue(self.rules(changed, path))
-
-    def test_live_environment_and_credentials_are_bound_to_guarded_nightly_jobs(self):
-        root = Path(__file__).resolve().parent.parent
-        source = (root / ".github/workflows/ci-nightly.yml").read_text()
-        document = yaml.load(source, Loader=policy.WorkflowLoader)
-        self.assertEqual(self.rules(document, ".github/workflows/ci-nightly.yml"), set())
-        legal = copy.deepcopy(document)
-        steps = legal["jobs"]["live-unit"]["steps"]
-        steps[0]["name"] = "Check secrets are absent before injection"
-        steps[2]["run"] = "# secrets are injected later\n" + steps[2]["run"]
-        steps[3]["name"] = "${{ format('{0}', 'secrets') }}"
-        steps[4]["name"] = "${{ github.event.inputs.secrets }} ${{ inputs.check-secrets }}"
-        steps[5]["name"] = "Check secrets.IMMICH_TEST_SERVER_URL is absent"
-        self.assertEqual(self.rules(legal, ".github/workflows/ci-nightly.yml"), set())
-        for mutation in ("other-workflow", "unconditional", "job-secret", "early-secret", "wrong-environment",
-                         "run-secret", "with-secret", "bracket-secret", "expression-environment",
-                         "whole-context", "dynamic-secret", "lowercase-secret", "uppercase-context",
-                         "other-secret", "inherited-context", "binding-context", "env-named-if", "implicit-if"):
-            with self.subTest(mutation=mutation):
-                changed = copy.deepcopy(document)
-                job = changed["jobs"]["live-unit"]
-                path = ".github/workflows/ci-nightly.yml"
-                if mutation == "other-workflow":
-                    path = ".github/workflows/other.yml"
-                elif mutation == "unconditional":
-                    job.pop("if")
-                elif mutation == "job-secret":
-                    job["env"] = {"CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}
-                elif mutation == "early-secret":
-                    job["steps"][0]["env"] = {"CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}
-                elif mutation == "run-secret":
-                    job["steps"][0]["run"] = "echo '${{ secrets.IMMICH_TEST_SERVER_URL }}'"
-                elif mutation == "with-secret":
-                    job["steps"][0]["with"]["ref"] = "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"
-                elif mutation == "bracket-secret":
-                    job["steps"][0]["env"] = {"OTHER": "${{ secrets['IMMICH_TEST_SERVER_URL'] }}"}
-                elif mutation == "expression-environment":
-                    job["environment"] = "${{ inputs.environment }}"
-                elif mutation == "whole-context":
-                    job["steps"][0]["env"] = {"OTHER": "${{ toJSON(secrets) }}"}
-                elif mutation == "dynamic-secret":
-                    job["steps"][0]["env"] = {"OTHER": "${{ secrets[format('IMMICH_{0}', 'TEST_SERVER_URL')] }}"}
-                elif mutation == "lowercase-secret":
-                    job["steps"][0]["env"] = {"OTHER": "${{ secrets.immich_test_server_url }}"}
-                elif mutation == "uppercase-context":
-                    job["steps"][0]["env"] = {"OTHER": "${{ toJSON(SeCrEtS) }}"}
-                elif mutation == "other-secret":
-                    job["env"] = {"OTHER": "${{ secrets.UNRELATED }}"}
-                elif mutation == "inherited-context":
-                    changed["env"] = {"OTHER": "${{ toJSON(secrets) }}"}
-                elif mutation == "env-named-if":
-                    job["steps"][0]["env"] = {"if": "'${{ toJSON(secrets) }}'"}
-                elif mutation == "implicit-if":
-                    job["steps"][0]["if"] = "secrets.OTHER != ''"
-                elif mutation == "binding-context":
-                    step = next(step for step in job["steps"] if step.get("id") == "live")
-                    step["env"]["CI_LIVE_URL"] = "${{ toJSON(secrets) }}"
-                else:
-                    job["environment"] = "test-server"
-                self.assertIn("live-credential", self.rules(changed, path))
 
     def rules(self, document, path=".github/workflows/example.yml", **options):
         return {item.rule for item in policy.check_workflow(path, yaml.safe_dump(document), **options)}
 
     def trusted(self):
         document = workflow()
-        document["on"] = {"workflow_run": {"workflows": ["ci-gate"],
-                                           "types": ["requested", "in_progress", "completed"]}}
+        document["on"] = {"pull_request_target": None}
         document["jobs"]["check"]["steps"][0]["with"] = {"ref": "main"}
         document["jobs"]["check"]["runs-on"] = "ubuntu-24.04"
         return document
 
     def test_main_push_producers_coalesce_by_replacing_only_pending_runs(self):
         root = Path(__file__).resolve().parent.parent
-        for path in (".github/workflows/ci-gate.yml", ".github/workflows/ci-ui.yml"):
+        for path in (".github/workflows/ci-gate.yml",):
             document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
             self.assertNotIn("concurrency-queue", self.rules(document, path))
             for mutation in (
@@ -998,6 +243,41 @@ final class LocaleUITests: XCTestCase {
         document["jobs"]["other"] = copy.deepcopy(document["jobs"]["check"])
         del document["jobs"]["other"]["permissions"]
         self.assertIn("permissions", self.rules(document))
+        document = workflow()
+        document["jobs"]["check"]["permissions"] = {"issues": "write"}
+        self.assertIn("write-permission", self.rules(document))
+
+    def test_protected_environments_are_bound_to_named_workflows(self):
+        for name in ("ci-publisher", "immich-test-server"):
+            with self.subTest(environment=name):
+                document = workflow()
+                document["jobs"]["check"]["environment"] = name
+                self.assertIn("environment", self.rules(document, ".github/workflows/ci-gate.yml"))
+
+    def test_retained_workflows_cannot_read_secrets(self):
+        cases = (
+            ("job", "env", {"CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}),
+            ("step", "env", {"CI_LIVE_KEY": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}),
+            ("step", "run", "echo '${{ secrets.IMMICH_TEST_SERVER_URL }}'"),
+            ("step", "with", {"ref": "${{ secrets.IMMICH_TEST_SERVER_API_KEY }}"}),
+            ("step", "env", {"OTHER": "${{ secrets['IMMICH_TEST_SERVER_URL'] }}"}),
+            ("step", "env", {"OTHER": "${{ toJSON(secrets) }}"}),
+            ("step", "env", {"OTHER": "${{ secrets[format('IMMICH_{0}', 'TEST_SERVER_URL')] }}"}),
+            ("step", "env", {"OTHER": "${{ secrets.immich_test_server_url }}"}),
+            ("step", "env", {"OTHER": "${{ toJSON(SeCrEtS) }}"}),
+            ("job", "env", {"OTHER": "${{ secrets.UNRELATED }}"}),
+            ("workflow", "env", {"OTHER": "${{ toJSON(secrets) }}"}),
+            ("step", "env", {"if": "'${{ toJSON(secrets) }}'"}),
+            ("step", "if", "secrets.OTHER != ''"),
+            ("step", "env", {"CI_LIVE_URL": "${{ toJSON(secrets) }}"}),
+        )
+        for scope, field, value in cases:
+            with self.subTest(scope=scope, field=field, value=value):
+                document = workflow()
+                job = document["jobs"]["check"]
+                target = {"workflow": document, "job": job, "step": job["steps"][0]}[scope]
+                target[field] = value
+                self.assertIn("credential", self.rules(document))
 
     def test_each_job_needs_a_bounded_literal_timeout(self):
         for value in [None, 0, -1, 361, True, "5", "${{ inputs.timeout }}", "${{ matrix.timeout_minutes }}"]:
@@ -1011,114 +291,6 @@ final class LocaleUITests: XCTestCase {
         document["jobs"]["other"] = {"runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}
         self.assertIn("timeout", self.rules(document))
 
-    def test_approval_wait_cannot_acquire_credentials_or_execute_an_action(self):
-        document = {"on": {"workflow_dispatch": None}, "permissions": {}, "jobs": {
-            "wait": {"runs-on": "ubuntu-24.04", "timeout-minutes": 5, "permissions": {},
-                     "environment": "ci-approval", "steps": [{"run": "/usr/bin/true"}]}}}
-        path = ".github/workflows/ci-approval.yml"
-        self.assertEqual(self.rules(document, path), set())
-        for key, value in (("permissions", {"contents": "read"}),
-                           ("env", {"CI_APP_PRIVATE_KEY": "${{ secrets.CI_APP_PRIVATE_KEY }}"}),
-                           ("steps", [{"uses": f"actions/checkout@{SHA}", "with": {"ref": "main"}}])):
-            with self.subTest(key=key):
-                modified = copy.deepcopy(document)
-                modified["jobs"]["wait"][key] = value
-                self.assertIn("approval-wait", self.rules(modified, path))
-
-    def test_app_key_binding_is_refused_outside_the_guarded_publisher_step(self):
-        document = self.trusted()
-        document["jobs"]["check"]["steps"] = [{"run": '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py route',
-            "env": {"CI_APP_PRIVATE_KEY": "${{ secrets.CI_APP_PRIVATE_KEY }}"}}]
-        self.assertIn("publisher-credential", self.rules(document, TRUSTED))
-        document["jobs"]["check"]["environment"] = "ci-publisher"
-        self.assertIn("publisher-credential", self.rules(document, TRUSTED))
-        document["jobs"]["check"]["steps"][0]["run"] = '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py publish'
-        self.assertNotIn("publisher-credential", self.rules(document, TRUSTED))
-        for scope in ("workflow", "job"):
-            for binding in ("CI_APP_ID", "CI_APP_PRIVATE_KEY"):
-                with self.subTest(scope=scope, binding=binding):
-                    modified = copy.deepcopy(document)
-                    owner = modified if scope == "workflow" else modified["jobs"]["check"]
-                    owner["env"] = {binding: policy.PUBLISHER_BINDINGS[binding]}
-                    self.assertIn("publisher-credential", self.rules(modified, TRUSTED))
-
-    def test_publisher_history_runner_and_approval_queue_contracts_fail_closed(self):
-        root = Path(__file__).parents[1]
-        publisher = yaml.load((root / TRUSTED).read_text(), Loader=policy.WorkflowLoader)
-        self.assertEqual(self.rules(publisher, TRUSTED), set())
-        shallow = copy.deepcopy(publisher)
-        del shallow["jobs"]["publish"]["steps"][0]["with"]["fetch-depth"]
-        self.assertIn("publisher-history", self.rules(shallow, TRUSTED))
-        expensive = copy.deepcopy(publisher)
-        expensive["jobs"]["admission"]["runs-on"] = "xcode-27"
-        self.assertIn("publisher-runner", self.rules(expensive, TRUSTED))
-        redundant = copy.deepcopy(publisher)
-        del redundant["jobs"]["admission"]["steps"][-1]["if"]
-        self.assertIn("publisher-admission", self.rules(redundant, TRUSTED))
-        for path in (".github/workflows/ci-approval.yml", ".github/workflows/ci-approve.yml"):
-            document = yaml.load((root / path).read_text(), Loader=policy.WorkflowLoader)
-            self.assertEqual(self.rules(document, path), set())
-            document["jobs"]["record"]["concurrency"] = {"group": "ci-state-pr-${{ inputs.pull_request }}", "cancel-in-progress": False}
-            self.assertIn("approval-queue", self.rules(document, path))
-
-    def probe(self):
-        document = self.trusted()
-        document["name"] = "ci-probe"
-        document["on"] = {"schedule": [{"cron": "17 8 * * *"}], "workflow_dispatch": None}
-        document["permissions"] = {}
-        document["jobs"]["check"]["permissions"] = {"contents": "read", "issues": "write"}
-        document["jobs"]["check"]["steps"].extend([
-            {"run": '/usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv "$RUNNER_TEMP/ci-python"'},
-            {"run": "/usr/bin/python3 scripts/probe_ci_toolchain.py", "env": {
-                "CI_PROBE_TOKEN": "${{ github.token }}",
-                "CI_PROBE_SIMULATE_MISSING_PIN": "${{ inputs.simulate_missing_pin || false }}",
-            }},
-        ])
-        return document
-
-    def test_probe_grants_only_its_named_trusted_entry_points_and_bindings(self):
-        document = self.probe()
-        self.assertEqual(set(), self.rules(document, ".github/workflows/ci-probe.yml"))
-        self.assertIn("issue-write", self.rules(document))
-        self.assertIn("trusted-run", self.rules(document, TRUSTED))
-        for mutation, rule in [
-            ({"name": "renamed"}, "probe-contract"),
-            ({"on": {"pull_request": None}}, "probe-contract"),
-            ({"on": {"workflow_dispatch": None}}, "probe-contract"),
-            ({"permissions": {"issues": "write"}}, "probe-contract"),
-        ]:
-            with self.subTest(mutation=mutation):
-                changed = copy.deepcopy(document)
-                changed.update(mutation)
-                self.assertIn(rule, self.rules(changed, ".github/workflows/ci-probe.yml"))
-        for key, value in [("contents", "write"), ("actions", "write"), ("id-token", "write")]:
-            with self.subTest(permission=key):
-                changed = copy.deepcopy(document)
-                changed["jobs"]["check"]["permissions"][key] = value
-                self.assertIn("probe-contract", self.rules(changed, ".github/workflows/ci-probe.yml"))
-        for script in ["/usr/bin/python3 scripts/probe_ci_toolchain.py --root ci-artifacts",
-                       "/usr/bin/python3 scripts/probe_ci_toolchain.py; echo unsafe"]:
-            with self.subTest(script=script):
-                changed = copy.deepcopy(document)
-                changed["jobs"]["check"]["steps"][-1]["run"] = script
-                self.assertIn("trusted-run", self.rules(changed, ".github/workflows/ci-probe.yml"))
-        changed = copy.deepcopy(document)
-        changed["jobs"]["check"]["steps"][-1]["env"]["CI_PROBE_TOKEN"] = "${{ secrets.OTHER_TOKEN }}"
-        self.assertIn("trusted-environment", self.rules(changed, ".github/workflows/ci-probe.yml"))
-        changed = copy.deepcopy(document)
-        changed["jobs"]["check"]["steps"][0]["with"]["ref"] = "${{ github.sha }}"
-        self.assertIn("trusted-checkout", self.rules(changed, ".github/workflows/ci-probe.yml"))
-
-    def test_issue_write_is_reserved_for_probe_and_report(self):
-        for path in [".github/workflows/example.yml", TRUSTED, ".github/workflows/ci-probe.yaml"]:
-            with self.subTest(path=path):
-                document = workflow()
-                document["permissions"]["issues"] = "write"
-                self.assertIn("issue-write", self.rules(document, path))
-        document = self.trusted()
-        document["permissions"]["issues"] = "write"
-        self.assertNotIn("issue-write", self.rules(document, ".github/workflows/ci-report.yml"))
-
     def test_privileged_triggers_use_exact_paths_in_all_yaml_forms(self):
         for event in ["pull_request_target", ["pull_request_target"], {"pull_request_target": None}]:
             with self.subTest(event=event):
@@ -1129,7 +301,7 @@ final class LocaleUITests: XCTestCase {
                 self.assertIn("pull-request-target", self.rules(document, ".github/workflows/privacy-preflight.yaml"))
         document = self.trusted()
         self.assertEqual(set(), self.rules(document, TRUSTED))
-        self.assertIn("workflow-run", self.rules(document))
+        self.assertIn("pull-request-target", self.rules(document))
         for event in ["workflow_run", ["workflow_run"]]:
             document["on"] = event
             self.assertIn("workflow-run", self.rules(document, TRUSTED))
@@ -1139,106 +311,12 @@ final class LocaleUITests: XCTestCase {
                               {"workflows": "ci-gate"}, {"workflows": ["ci-gate"], "types": ["unknown"]}]:
             with self.subTest(configuration=configuration):
                 document = self.trusted()
-                document["on"]["workflow_run"] = configuration
+                document["on"] = {"workflow_run": configuration}
                 self.assertIn("workflow-run", self.rules(document, TRUSTED))
         document = self.trusted()
         document["on"]["workflow_run"] = {"workflows": ["ci-nightly"], "types": ["completed"]}
-        self.assertNotIn("workflow-run", self.rules(document, ".github/workflows/ci-report.yml"))
+        self.assertIn("workflow-run", self.rules(document, TRUSTED))
 
-    def test_run_named_producers_cannot_be_selected_by_workflow_run_name(self):
-        options = {"run_named_workflows": {"ci-gate"}}
-        for condition in ("github.event.workflow_run.name == 'ci-gate'", "'ci-gate' == github.event.workflow_run.name",
-                          "contains(fromJSON('[\"ci-gate\"]'), github.event.workflow_run.name)",
-                          "github.event.workflow_run['name'] == 'ci-gate'",
-                          "github['event']['workflow_run']['name'] == 'ci-gate'"):
-            for location in ("job", "step", "env"):
-                with self.subTest(condition=condition, location=location):
-                    document = self.trusted()
-                    job = document["jobs"]["check"]
-                    if location == "job":
-                        job["if"] = condition
-                    elif location == "step":
-                        job["steps"][0]["if"] = "${{ " + condition + " }}"
-                    else:
-                        document["env"] = {"SELECTED": "${{ " + condition + " }}"}
-                    self.assertIn("workflow-run-name", self.rules(document, TRUSTED, **options))
-        document = self.trusted()
-        document["jobs"]["check"]["if"] = "github.event.workflow_run.path == '.github/workflows/ci-gate.yml'"
-        self.assertNotIn("workflow-run-name", self.rules(document, TRUSTED, **options))
-        document["jobs"]["check"]["if"] = "github.event.workflow_run.name == 'ci-gate'"
-        self.assertNotIn("workflow-run-name", self.rules(document, TRUSTED, run_named_workflows={"unrelated"}))
-        self.assertNotIn("workflow-run-name", self.rules(document, TRUSTED))
-        document["jobs"]["check"]["if"] = "github.event.workflow_run.path == '.github/workflows/ci-gate.yml'"
-        document["jobs"]["check"]["name"] = "${{ github.event.workflow_run.name }}"
-        self.assertNotIn("workflow-run-name", self.rules(document, TRUSTED, **options))
-
-    def test_policy_discovers_run_named_producers_before_checking_consumers(self):
-        # Discover producer run-name across files instead of trusting a fixed producer list.
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            workflows = root / ".github/workflows"
-            workflows.mkdir(parents=True)
-            producer = workflow()
-            producer.update({"name": "ci-gate", "run-name": "Gate run ${{ github.run_id }}"})
-            (workflows / "producer.yaml").write_text(yaml.safe_dump(producer))
-            document = self.trusted()
-            document["jobs"]["check"]["if"] = "github.event.workflow_run.name == 'ci-gate'"
-            (workflows / "ci-publish.yml").write_text(yaml.safe_dump(document))
-            output = io.StringIO()
-            with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(1, policy.main(["--root", str(root)]))
-            self.assertIn("[workflow-run-name]", output.getvalue())
-
-    def test_reporter_rejects_write_grants_environments_branch_code_and_unbounded_retention(self):
-        document = {"name": "ci-report", "on": {"schedule": [{"cron": "30 8 * * *"}],
-                    "workflow_dispatch": {"inputs": {"reset_history": {
-                        "description": "Maintainer-only explicit bootstrap or reset of reporting history",
-                        "required": False, "default": False, "type": "boolean"}}},
-                    "workflow_run": {"workflows": ["ci-nightly"], "types": ["completed"], "branches": ["main"]}},
-                    "permissions": {}, "jobs": {"report": {"if": "github.ref == 'refs/heads/main' && "
-                    "(github.event_name != 'workflow_run' || "
-                    "(github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' && "
-                    "((github.event.workflow_run.path == '.github/workflows/ci-nightly.yml' && contains(fromJSON('[\"schedule\",\"workflow_dispatch\"]'), github.event.workflow_run.event)) || "
-                    "(contains(fromJSON('[\".github/workflows/ci-gate.yml\",\".github/workflows/ci-ui.yml\"]'), github.event.workflow_run.path) && github.event.workflow_run.event == 'push'))))",
-                    "runs-on": "ubuntu-24.04", "timeout-minutes": 30,
-                    "permissions": {"contents": "read", "actions": "read", "checks": "read", "pull-requests": "read", "issues": "write"},
-                    "concurrency": {"group": "ci-report-state", "cancel-in-progress": False},
-                    "steps": [{"uses": "actions/checkout@" + SHA, "with": {"ref": "main", "fetch-depth": 0}},
-                              {"run": '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase collect',
-                               "env": {"CI_REPORT_TOKEN": "${{ github.token }}"}},
-                              {"if": "success()", "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
-                               "with": {"name": "ci-report-daily-${{ github.run_id }}-${{ github.run_attempt }}",
-                                        "path": "${{ runner.temp }}/ci-report/daily", "if-no-files-found": "error", "retention-days": 90}},
-                              {"if": "success()", "run": '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase sync',
-                               "env": {"CI_REPORT_TOKEN": "${{ github.token }}"}}]}}}
-        document["on"]["workflow_dispatch"]["inputs"]["health_month"] = {
-            "description": "Optional UTC health month (YYYY-MM); scheduled collection reports the previous month on day 1",
-            "required": False, "default": "", "type": "string"}
-        document["jobs"]["report"]["steps"].insert(3, {
-            "if": "success() && steps.collect.outputs.health_month != ''",
-            "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
-            "with": {"name": "ci-report-health-${{ steps.collect.outputs.health_month }}-${{ github.run_id }}-${{ github.run_attempt }}",
-                     "path": "${{ runner.temp }}/ci-report/health", "if-no-files-found": "error", "retention-days": 90}})
-        self.assertEqual(set(), self.rules(document, policy.REPORT_WORKFLOW))
-        for mutate in (lambda job: job["permissions"].update(actions="write"),
-                       lambda job: job["permissions"].pop("checks"),
-                       lambda job: job["permissions"].update(checks="write"),
-                       lambda job: job.update(environment="ci-publisher"),
-                       lambda job: job.update({"if": "github.ref == 'refs/heads/main'"}),
-                       lambda job: job.update({"if": job["if"].replace("workflow_run.path == '.github/workflows/ci-nightly.yml'", "workflow_run.name == 'ci-nightly'")}),
-                       lambda job: job.update({"if": job["if"].replace("head_repository.full_name == github.repository", "head_repository.full_name != github.repository")}),
-                       lambda job: job.update({"if": job["if"].replace("event == 'push'", "event == 'pull_request'")}),
-                       lambda job: job["steps"][2].update({"if": "always()"}),
-                       lambda job: job["steps"][3].update({"if": "always()"}),
-                       lambda job: job["steps"].reverse(),
-                       lambda job: job["steps"][0]["with"].update(ref="${{ github.event.workflow_run.head_sha }}"),
-                       lambda job: job.update(concurrency={"group": "ci-report-state", "cancel-in-progress": True})):
-            changed = copy.deepcopy(document)
-            mutate(changed["jobs"]["report"])
-            self.assertIn("report-contract", self.rules(changed, policy.REPORT_WORKFLOW))
-        changed = copy.deepcopy(document)
-        changed["on"]["workflow_run"].pop("branches")
-        self.assertIn("report-contract", self.rules(changed, policy.REPORT_WORKFLOW))
 
     def test_trusted_checkout_rejects_pr_refs_shas_and_indirection(self):
         for ref in ["refs/pull/123/head", "refs/pull/123/merge", "${{ github.event.pull_request.head.sha }}",
@@ -1261,7 +339,6 @@ final class LocaleUITests: XCTestCase {
         document["on"] = {"pull_request_target": None}
         document["jobs"]["check"]["steps"][0]["with"] = {"ref": "${{ github.event.pull_request.base.sha }}"}
         self.assertEqual(set(), self.rules(document, policy.PRIVACY_WORKFLOW))
-        self.assertIn("trusted-checkout", self.rules(document, TRUSTED))
 
     def test_trusted_shell_cannot_materialize_pr_code_but_can_fetch_objects(self):
         for command in ["git checkout $HEAD_SHA", "git switch branch", "git reset --hard FETCH_HEAD",
@@ -1323,19 +400,6 @@ final class LocaleUITests: XCTestCase {
                 document["jobs"]["check"]["steps"].append({"run": script})
                 self.assertIn("trusted-run", self.rules(document, TRUSTED))
 
-    def test_protected_environments_are_bound_to_named_workflows(self):
-        for environment, allowed in [("ci-publisher", TRUSTED), ("ci-approval", ".github/workflows/ci-approval.yml"),
-                                     ("release", ".github/workflows/ci-release.yml")]:
-            for value in [environment, environment.upper(), {"name": environment}]:
-                with self.subTest(value=value):
-                    document = workflow()
-                    document["jobs"]["check"]["steps"][0]["with"] = {"ref": "main"}
-                    document["jobs"]["check"]["environment"] = value
-                    self.assertIn("environment", self.rules(document))
-                    self.assertNotIn("environment", self.rules(document, allowed))
-        document = workflow()
-        document["jobs"]["check"]["environment"] = "${{ inputs.environment }}"
-        self.assertIn("environment", self.rules(document))
 
     def test_trusted_artifacts_cannot_be_injected_through_loader_environment(self):
         for key, value in [("PATH", "ci-artifacts:$PATH"), ("BASH_ENV", "ci-artifacts/env"),

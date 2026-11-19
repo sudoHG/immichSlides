@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch
 
 import ci_smoke_shadow as shadow
 # Import before patching dependencies so the tracer cannot retain their mocks.
-import run_strict_ci_tracer as tracer
+import strict_e2e_runner_support as tracer
 import strict_e2e_build
 from ci_summary import ContractError
 
@@ -139,7 +139,7 @@ def replace_runner_record(directory, result):
 def plan_fixture(temporary, stack, *, ancestor=0):
     context = dict(environment(), GITHUB_OUTPUT=str(temporary / "output"))
     api = SimpleNamespace(repository=REPOSITORY, pages=Mock(return_value=[]))
-    stack.enter_context(patch("ci_publish.GitHub", return_value=api))
+    stack.enter_context(patch("ci_smoke_shadow.GitHub", return_value=api))
     stack.enter_context(patch.object(shadow.subprocess, "call", return_value=ancestor))
     reader = stack.enter_context(patch.object(shadow, "manifest_at_head", return_value=(manifest(), "c" * 64)))
     return context, api, reader
@@ -207,6 +207,34 @@ class SimulatorGroupFixture(ExitStack):
             return fixture
 
 
+class SmokeReadOnlyAPITests(unittest.TestCase):
+    def test_artifact_redirect_keeps_tokens_only_on_https_github(self):
+        from urllib.request import Request
+        redirect = shadow.ArtifactRedirect()
+        request = Request("https://api.github.com/repos/example/photos", headers={"Authorization": "Bearer synthetic"})
+        for target, authenticated in (("https://api.github.com/download", True), ("https://storage.example/download", False)):
+            with self.subTest(target=target):
+                redirected = redirect.redirect_request(request, None, 302, "Found", {}, target)
+                self.assertEqual(redirected.has_header("Authorization"), authenticated)
+        with self.assertRaisesRegex(ContractError, "HTTPS"):
+            redirect.redirect_request(request, None, 302, "Found", {}, "http://storage.example/download")
+
+    def test_smoke_client_refuses_writes_and_incomplete_attempt_jobs(self):
+        api = shadow.GitHub(REPOSITORY, "synthetic")
+        with patch.object(shadow, "build_opener") as network:
+            with self.assertRaisesRegex(ContractError, "read-only"):
+                api.repo("statuses/head", method="POST", payload={})
+            network.assert_not_called()
+        job = {"id": 1, "run_id": 200, "run_attempt": 1}
+        for response in ({"total_count": 1, "jobs": []}, {"total_count": True, "jobs": [job]},
+                         {"total_count": 2, "jobs": [job, job]},
+                         {"total_count": 1, "jobs": [dict(job, run_attempt=2)]}):
+            with self.subTest(response=response), self.assertRaises(ContractError):
+                shadow.complete_attempt_jobs(SimpleNamespace(repo=Mock(return_value=response)), {"id": 200, "run_attempt": 1})
+        self.assertEqual([job], shadow.complete_attempt_jobs(
+            SimpleNamespace(repo=Mock(return_value={"total_count": 1, "jobs": [job]})), {"id": 200, "run_attempt": 1}))
+
+
 class SmokeShadowTests(unittest.TestCase):
     def test_scopes_select_exact_flows_and_omit_empty_jobs(self):
         import strict_e2e_smoke as smoke
@@ -214,7 +242,7 @@ class SmokeShadowTests(unittest.TestCase):
         flows = json.loads((shadow.ROOT / shadow.MANIFEST).read_text())
         expected_core = {"tv-first-boot", "tv-playback-controls", "tv-pause-resume", "tv-background-return",
                          "tv-server-switch", "iphone-first-boot", "ipad-rotation"}
-        planned = json.loads((shadow.ROOT / "scripts/ci-test-tiers.json").read_text())["smoke_flows"]
+        planned = flows["flows"]
         for scope, expected in (("core", expected_core), ("full", {flow["id"] for flow in planned})):
             with self.subTest(scope=scope):
                 context = environment("schedule" if scope == "core" else "workflow_dispatch")
@@ -238,7 +266,7 @@ class SmokeShadowTests(unittest.TestCase):
                         ensure_disk_for_xcodebuild=Mock(side_effect=RuntimeError("selection inspected")))
                     methods = {flow["selector"]: {flow["platform"]} for flow in flows["flows"]}
                     with patch.object(smoke, "select_flows", wraps=smoke.select_flows) as select, \
-                            patch.object(smoke, "load_manifest", return_value=(flows, planned, methods)), \
+                            patch.object(smoke, "load_manifest", return_value=(flows, methods)), \
                             self.assertRaisesRegex(RuntimeError, "selection inspected"):
                         smoke.run(arguments, shadow.ROOT, runner, io.StringIO(), io.StringIO())
                     self.assertEqual(select.call_args.args[0], scheduling["flows"])
@@ -308,8 +336,8 @@ class SmokeShadowTests(unittest.TestCase):
                         record["shadow"]["id"] = "201"
                     api.pages.side_effect = lambda path, _collection, **_filters: ([candidate] if path.endswith("/runs") else [
                         {"name": f"smoke-shadow-{candidate['id']}-1", "expired": False, "id": 9}])
-                    stack.enter_context(patch("ci_publish.json_member", return_value=record))
-                    stack.enter_context(patch("ci_publish.complete_attempt_jobs", return_value=jobs))
+                    stack.enter_context(patch("ci_smoke_shadow.json_member", return_value=record))
+                    stack.enter_context(patch("ci_smoke_shadow.complete_attempt_jobs", return_value=jobs))
                     self.assertEqual(shadow.plan_run(context, temporary / "plan"), 0)
                     scheduling = json.loads((temporary / "plan/plan.json").read_text())
                     expected = event == "workflow_dispatch" or defect is not None
@@ -334,8 +362,8 @@ class SmokeShadowTests(unittest.TestCase):
             record["shadow"] = dict(record["shadow"], id="100", event="schedule")
             api.pages.side_effect = lambda path, _collection, **_filters: ([prior] if path.endswith("/runs") else [
                 {"name": "smoke-shadow-100-1", "expired": False, "id": 9}])
-            stack.enter_context(patch("ci_publish.json_member", return_value=record))
-            stack.enter_context(patch("ci_publish.complete_attempt_jobs", return_value=[
+            stack.enter_context(patch("ci_smoke_shadow.json_member", return_value=record))
+            stack.enter_context(patch("ci_smoke_shadow.complete_attempt_jobs", return_value=[
                 {"name": "smoke-shadow-" + group["id"], "status": "completed", "conclusion": "success"}
                 for group in full["groups"]]))
             stack.enter_context(patch.object(shadow, "git", return_value=HEAD))
@@ -359,7 +387,7 @@ class SmokeShadowTests(unittest.TestCase):
                 else:
                     api.pages.side_effect = lambda path, _collection, **_filters: ([run_metadata()] if path.endswith("/runs") else [
                         {"name": "smoke-shadow-100-1", "expired": False, "id": 9}])
-                read = stack.enter_context(patch("ci_publish.json_member", side_effect=zipfile.BadZipFile("synthetic corrupt artifact")))
+                read = stack.enter_context(patch("ci_smoke_shadow.json_member", side_effect=zipfile.BadZipFile("synthetic corrupt artifact")))
                 self.assertEqual(shadow.plan_run(context, temporary / "plan"), 0)
                 scheduling = json.loads((temporary / "plan/plan.json").read_text())
                 self.assertTrue(scheduling["execute"])
@@ -704,7 +732,7 @@ class SmokeShadowTests(unittest.TestCase):
                            GITHUB_WORKFLOW_REF=REPOSITORY + "/" + shadow.WORKFLOW + "@refs/heads/main")
             run = dict(run_metadata(), id=200, workflow_id=8, path=shadow.WORKFLOW, head_sha=planned, event="workflow_dispatch")
             api = SimpleNamespace(repo=lambda path: run if path == "actions/runs/200" else {"id": 8, "path": shadow.WORKFLOW})
-            with patch.object(shadow, "ROOT", root), patch("ci_publish.GitHub", return_value=api):
+            with patch.object(shadow, "ROOT", root), patch("ci_smoke_shadow.GitHub", return_value=api):
                 control = shadow.authoritative_control(context, api)
                 advanced = commit("advanced")
                 subprocess.run(["git", "update-ref", "refs/remotes/origin/main", advanced], cwd=root, check=True)
@@ -777,7 +805,7 @@ class SmokeShadowTests(unittest.TestCase):
                         {"name": "smoke-shadow-iphone-debug", "steps": [dict(step, name="Download the selected configuration archive")]}]
                 producers = [{"configuration": "Debug", "timing": {"upload_seconds": None}}]
                 records = [{"timing_mode": shadow.ARCHIVE_MODE, "group": {"id": "iphone-debug"}, "transfer_seconds": None}]
-                with patch("ci_publish.GitHub"), patch("ci_publish.complete_attempt_jobs", return_value=jobs,
+                with patch("ci_smoke_shadow.GitHub"), patch("ci_smoke_shadow.complete_attempt_jobs", return_value=jobs,
                         side_effect=OSError("unavailable") if state == "api-error" else None):
                     shadow.read_transfer_timings(scheduling, producers, records, environment())
                 self.assertEqual(producers[0]["timing"]["upload_seconds"], 2 if state == "complete" else None)
@@ -825,7 +853,7 @@ class SmokeShadowTests(unittest.TestCase):
                 stack.enter_context(patch.object(shadow, "git", return_value=HEAD))
                 stack.enter_context(patch("ci_build_archive.file_hash", return_value="c" * 64))
                 stack.enter_context(patch.object(shadow, "job_started_epoch", return_value=100.0))
-                stack.enter_context(patch("ci_publish.complete_attempt_jobs", return_value=[{"name": "smoke-shadow-iphone-debug", "steps": [
+                stack.enter_context(patch("ci_smoke_shadow.complete_attempt_jobs", return_value=[{"name": "smoke-shadow-iphone-debug", "steps": [
                     {"name": "Download the selected configuration archive", "conclusion": None}]}]))
                 stack.enter_context(patch("ci_build_archive.workspace_preflight"))
                 stack.enter_context(patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"))
@@ -1056,7 +1084,7 @@ class SmokeShadowTests(unittest.TestCase):
                 return {"identity": {"source": scheduling["tested_source"]}}, {
                     "manifest_sha256": "d" * 64, "archive_sha256": "e" * 64}
             stack.enter_context(patch("strict_e2e_build.build_smoke_archive", side_effect=build))
-            run = stack.enter_context(patch("run_strict_ci_tracer.run_runner", return_value=0))
+            run = stack.enter_context(patch("strict_e2e_runner_support.run_runner", return_value=0))
             self.assertEqual(shadow.run_producer(scheduling, dict(environment(), SMOKE_CONFIGURATION="Debug"), temporary), 0)
             self.assertEqual(run.call_args.kwargs["environment"], {"PATH": "/filtered"})
 
@@ -1077,7 +1105,7 @@ class SmokeShadowTests(unittest.TestCase):
 
     def test_runner_child_receives_only_the_explicit_build_environment(self):
         import sys
-        from run_strict_ci_tracer import run_runner
+        from strict_e2e_runner_support import run_runner
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             with patch.dict(os.environ, {"UI_TEST_SYNTHETIC": "ambient"}):
@@ -1146,7 +1174,7 @@ class SmokeShadowTests(unittest.TestCase):
                             compilation.assert_not_called()
 
     def test_producer_cleanup_refusal_preserves_owned_products(self):
-        from run_strict_ci_tracer import RunnerGroupCleanupError
+        from strict_e2e_runner_support import RunnerGroupCleanupError
         scheduling = dict(plan(), build_mode=shadow.ARCHIVE_MODE, tested_source={"head_sha": HEAD}, control={"run_id": "200"})
         with tempfile.TemporaryDirectory() as raw:
             temporary = Path(raw)
@@ -1157,7 +1185,7 @@ class SmokeShadowTests(unittest.TestCase):
                     patch("strict_e2e_build.smoke_source_identity", return_value=scheduling["tested_source"]), \
                     patch("strict_e2e_build.build_smoke_archive", side_effect=build), \
                     patch("ci_build_archive.workspace_preflight"), patch("ci_build_archive.disk_check"), \
-                    patch("run_strict_ci_tracer.run_runner", side_effect=RunnerGroupCleanupError("synthetic refusal")):
+                    patch("strict_e2e_runner_support.run_runner", side_effect=RunnerGroupCleanupError("synthetic refusal")):
                 with self.assertRaises(RunnerGroupCleanupError):
                     shadow.run_producer(scheduling, dict(environment(), SMOKE_CONFIGURATION="Debug"), temporary)
             self.assertTrue((temporary / "smoke-cleanup-blocked").exists())
@@ -1638,7 +1666,7 @@ class SmokeShadowTests(unittest.TestCase):
         job = {"id": 1, "run_id": 200, "run_attempt": 1, "name": "smoke-shadow-iphone-debug",
                "started_at": "1970-01-01T00:16:40Z"}
         api = SimpleNamespace(repo=Mock(return_value={"total_count": 1, "jobs": [job]}))
-        with patch("ci_publish.GitHub", return_value=api), patch.object(shadow.time, "time", return_value=1100):
+        with patch("ci_smoke_shadow.GitHub", return_value=api), patch.object(shadow.time, "time", return_value=1100):
             self.assertEqual(shadow.job_started_epoch(environment(), "iphone-debug"), 1000)
             for change, message in [({"name": "foreign-job"}, "job start is unavailable"),
                                     ({"started_at": "invalid"}, "job start timestamp differs"),
@@ -1666,7 +1694,7 @@ class SmokeShadowTests(unittest.TestCase):
                         patch("ci_simulator.create_and_boot_simulator", return_value="synthetic"), \
                         patch.object(shadow.time, "time", return_value=2000), \
                         patch.object(shadow, "job_started_epoch", return_value=2000 - setup_seconds), \
-                        patch("run_strict_ci_tracer.run_runner", return_value=65) as runner:
+                        patch("strict_e2e_runner_support.run_runner", return_value=65) as runner:
                     self.assertEqual(shadow.run_group(scheduling, dict(environment(), SMOKE_GROUP=group_id), Path(raw)), 1)
                     record = json.loads((Path(raw) / "smoke-records/group.json").read_text())
                     if setup_seconds < minutes * 60:
@@ -1706,7 +1734,7 @@ class SmokeShadowTests(unittest.TestCase):
                         patch.object(shadow, "job_started_epoch", side_effect=clock), patch("ci_build_archive.workspace_preflight"), \
                         patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"), \
                         patch("ci_simulator.create_and_boot_simulator", return_value="synthetic"), \
-                        patch("run_strict_ci_tracer.run_runner", side_effect=invoke) as runner:
+                        patch("strict_e2e_runner_support.run_runner", side_effect=invoke) as runner:
                     self.assertEqual(shadow.run_group(plan(), context, temporary), int(clock_failure))
                     self.assertFalse("SMOKE_TOKEN" in os.environ, "runner environment excludes the clock token")
                     self.assertFalse("SMOKE_TOKEN" in context, "control context excludes the clock token")
@@ -1870,7 +1898,7 @@ class SmokeShadowTests(unittest.TestCase):
                         patch("ci_build_archive.file_hash", side_effect=bound_hash), \
                         patch("ci_build_archive.workspace_preflight"), patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"), \
                         patch("ci_simulator.create_and_boot_simulator", return_value="synthetic"), \
-                        patch("run_strict_ci_tracer.run_runner", side_effect=invoke):
+                        patch("strict_e2e_runner_support.run_runner", side_effect=invoke):
                     self.assertEqual(shadow.run_group(plan(), context, temporary), 1)
                 records = temporary / "smoke-records"
                 group = json.loads((records / "group.json").read_text())
@@ -2104,7 +2132,7 @@ class SmokeShadowTests(unittest.TestCase):
                     patch("ci_build_archive.workspace_preflight"), \
                     patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"), \
                     patch("ci_simulator.create_and_boot_simulator", return_value="synthetic"), \
-                    patch("run_strict_ci_tracer.run_runner", side_effect=invoke):
+                    patch("strict_e2e_runner_support.run_runner", side_effect=invoke):
                 self.assertEqual(shadow.run_group(scheduling, context, temporary), 1)
             record = json.loads((temporary / "smoke-records/group.json").read_text())
             self.assertEqual(record["runner_exit_code"], 124)

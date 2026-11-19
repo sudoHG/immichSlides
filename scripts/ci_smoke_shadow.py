@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -17,11 +18,16 @@ import sys
 import time
 import tarfile
 from pathlib import Path
+import zipfile
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 # The trusted entry point is staged outside the checkout before selecting a historical main SHA.
 ROOT = Path(os.environ.get("GITHUB_WORKSPACE") or Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(ROOT / "scripts"))
 from ci_summary import ContractError, decode, markdown_text, require, sha
+
 WORKFLOW = ".github/workflows/ci-smoke-shadow.yml"
 MANIFEST = "scripts/smoke-flows.json"
 GROUP_BUDGET_MINUTES = {"iphone-debug": 27, "iphone-release": 27, "ipad-debug": 27,
@@ -164,7 +170,6 @@ def plan_shared(scheduling, environment, api):
 
 
 def current_control(scheduling, environment):
-    from ci_publish import GitHub
     api = GitHub(environment["GITHUB_REPOSITORY"], environment.get("SMOKE_TOKEN"))
     control = authoritative_control(environment, api)
     require(control == scheduling["control"], "shadow control changed since planning")
@@ -172,7 +177,6 @@ def current_control(scheduling, environment):
 
 
 def producer_job(api, control, configuration):
-    from ci_publish import complete_attempt_jobs
     jobs = complete_attempt_jobs(api, {"id": int(control["run_id"]), "run_attempt": control["attempt"]})
     matches = [job for job in jobs if job.get("name") == "smoke-shadow-ios-" + configuration.lower()]
     require(len(matches) == 1, "smoke producer job is missing or ambiguous")
@@ -203,7 +207,6 @@ def read_transfer_timings(scheduling, producers, records, environment):
     if scheduling.get("build_mode") != ARCHIVE_MODE or not scheduling["execute"]:
         return
     try:
-        from ci_publish import GitHub, complete_attempt_jobs
         api = GitHub(environment["GITHUB_REPOSITORY"], environment.get("SMOKE_TOKEN"))
         jobs = complete_attempt_jobs(api, {"id": int(scheduling["shadow"]["id"]), "run_attempt": 1})
         def elapsed(name, step):
@@ -223,8 +226,8 @@ def read_transfer_timings(scheduling, producers, records, environment):
 
 
 def run_producer(scheduling, environment, temporary):
+    from strict_e2e_runner_support import RunnerGroupCleanupError, run_runner
     from strict_e2e_build import build_smoke_archive, smoke_source_identity
-    from run_strict_ci_tracer import run_runner, RunnerGroupCleanupError
     from ci_build_archive import disk_check, workspace_preflight
     configuration = environment["SMOKE_CONFIGURATION"]
     api, control = current_control(scheduling, environment)
@@ -707,8 +710,7 @@ def manifest_at_head(head):
     from strict_e2e_smoke import validate_manifest
     raw = subprocess.check_output(["git", "show", head + ":" + MANIFEST], cwd=ROOT, timeout=30)
     manifest = decode(raw.decode("utf-8"))
-    planned = decode(git("show", head + ":scripts/ci-test-tiers.json"))["smoke_flows"]
-    validate_manifest(manifest, planned)
+    validate_manifest(manifest)
     return manifest, hashlib.sha256(raw).hexdigest()
 
 
@@ -788,7 +790,6 @@ def setup(environment):
 
 def already_tested(api, scheduling):
     """Require actual first results and completed groups before suppressing a schedule."""
-    from ci_publish import complete_attempt_jobs, json_member
     repository, head = scheduling["repository"], scheduling["head_sha"]
     expected = {flow["id"] for flow in scheduling["flows"]}
     groups = {"smoke-shadow-" + group["id"] for group in scheduling["groups"]}
@@ -828,7 +829,6 @@ def already_tested(api, scheduling):
 
 
 def plan_run(environment, directory, *, shared=False):
-    from ci_publish import GitHub
     head = admit(environment)
     api = GitHub(environment["GITHUB_REPOSITORY"], environment.get("SMOKE_TOKEN"))
     require(subprocess.call(["git", "merge-base", "--is-ancestor", head, "origin/main"], cwd=ROOT, timeout=30) == 0,
@@ -863,7 +863,6 @@ def plan_run(environment, directory, *, shared=False):
 
 
 def job_started_epoch(environment, group_id):
-    from ci_publish import GitHub, complete_attempt_jobs
     run_id, attempt = environment.get("GITHUB_RUN_ID", ""), environment.get("GITHUB_RUN_ATTEMPT", "")
     require(run_id.isdecimal() and int(run_id) > 0 and attempt == "1", "shadow job clock context differs")
     api = GitHub(environment["GITHUB_REPOSITORY"], environment.get("SMOKE_TOKEN"))
@@ -895,8 +894,6 @@ def read_runner_flows(evidence, scheduling, selected, destination, *, validation
     from ci_build_archive import file_hash
     from ci_failure_diagnostics import (failure_messages_diagnostics, public_failure_messages, test_node_diagnostics,
                                         xctest_tool_class, FAILURE_MESSAGES_FIELD)
-    from run_strict_ci_tracer import read_case_official
-    from strict_e2e_p2_contract import official_tests_facts
     from strict_e2e_smoke import validate_group_evidence
     case = decode((evidence / "case-manifest.json").read_text())
     group = selected[0]
@@ -977,7 +974,7 @@ def read_runner_flows(evidence, scheduling, selected, destination, *, validation
             require(per_flow.get("official_tests_sha256") == result.get("official_tests_sha256") == file_hash(tests_path),
                     "flow official hash differs")
             tests = decode(tests_path.read_text())
-            official = read_case_official(directory, "smoke-flow")
+            official = read_case_official(directory)
             require(official is not None and per_flow.get("official_summary") == result.get("official_summary") == official,
                     "flow official summary differs")
             facts = official_tests_facts(tests)["test_cases"]
@@ -1041,9 +1038,9 @@ def read_runner_flows(evidence, scheduling, selected, destination, *, validation
 
 
 def run_group(scheduling, environment, temporary):
+    from strict_e2e_runner_support import RunnerGroupCleanupError, run_runner
     from ci_build_archive import file_hash, workspace_preflight
     from run_offline_unit_tests import CommandError as OfflineCommandError, default_data_available_gib, ensure_disk_for_xcodebuild
-    from run_strict_ci_tracer import run_runner, RunnerGroupCleanupError
     from strict_e2e_runner_support import CommandError, InfrastructureTimeout, prepare_simulator
     validate_plan(scheduling, environment, checkout_sha=git("rev-parse", "HEAD"),
                   manifest_hash=file_hash(ROOT / MANIFEST))
@@ -1391,6 +1388,146 @@ def main(argv=None):
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         print("Smoke shadow failed closed; inspect the raw first-result records and job phase.", file=sys.stderr)
         return 1
+
+
+MAX_JSON_BYTES = 16 * 1024 * 1024
+
+
+class ArtifactRedirect(HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        from urllib.parse import urlsplit
+        parsed = urlsplit(new_url)
+        require(parsed.scheme == "https", "artifact redirect must use HTTPS")
+        redirected = super().redirect_request(request, response, code, message, headers, new_url)
+        if parsed.hostname != "api.github.com":
+            redirected.remove_header("Authorization")
+        return redirected
+
+def positive(value):
+    require(type(value) is int and value > 0, "positive integer required")
+    return value
+
+def complete_attempt_jobs(api, run):
+    """Require the API's explicit count, including for an empty attempt."""
+    jobs, seen, total = [], set(), None
+    for page in range(1, 101):
+        response = api.repo(f"actions/runs/{positive(run['id'])}/attempts/{positive(run['run_attempt'])}/jobs?"
+                            + urlencode({"per_page": 100, "page": page}))
+        count, batch = response["total_count"], response["jobs"]
+        require(type(count) is int and 0 <= count <= 10000 and (total is None or count == total),
+                "invalid or changing attempt job count")
+        require(isinstance(batch, list) and len(batch) <= 100, "invalid attempt jobs")
+        total = count
+        for job in batch:
+            job_id = positive(job["id"])
+            require(job_id not in seen and positive(job["run_id"]) == run["id"]
+                    and positive(job["run_attempt"]) == run["run_attempt"], "unexpected attempt job")
+            seen.add(job_id)
+        jobs.extend(batch)
+        require(len(seen) <= total, "attempt jobs exceed total count")
+        if len(batch) < 100 or len(seen) == total:
+            require(len(seen) == total, "incomplete attempt jobs")
+            return jobs
+    raise ContractError("attempt jobs pagination limit reached")
+
+class GitHub:
+    def __init__(self, repository, token, *, response_headers=None):
+        require(re.fullmatch(r"[\w.-]+/[\w.-]+", repository) is not None, "invalid repository")
+        self.repository, self.token = repository, token
+        self.response_headers = response_headers
+
+    def request(self, path, *, method="GET", payload=None, binary=False, missing=False, timeout=45):
+        return self._request(path, method=method, payload=payload, binary=binary, missing=missing, timeout=timeout)
+
+    def _request(self, path, *, method, payload, binary, missing, timeout):
+        require(method == "GET" and payload is None, "smoke GitHub client is read-only")
+        url = "https://api.github.com" + path
+        data = json.dumps(payload).encode() if payload is not None else None
+        headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+        if self.token:
+            headers["Authorization"] = "Bearer " + self.token
+        request = Request(url, data=data, method=method, headers=headers)
+        try:
+            with build_opener(ArtifactRedirect()).open(request, timeout=timeout) as response:
+                if self.response_headers:
+                    self.response_headers(response.headers)
+                raw = response.read(MAX_JSON_BYTES + 1)
+        except HTTPError as error:
+            if self.response_headers:
+                self.response_headers(error.headers)
+            if missing and error.code == 404:
+                return None
+            # Never echo response bodies, headers, request objects or credentials.
+            message = f"GitHub API {method} refused request (HTTP {error.code})"
+            raise ContractError(message) from None
+        require(len(raw) <= MAX_JSON_BYTES, "GitHub payload exceeds limit")
+        return raw if binary else json.loads(raw) if raw else None
+
+    def repo(self, path, **options):
+        return self.request("/repos/" + self.repository + "/" + path, **options)
+
+    def pages(self, path, collection=None, **filters):
+        rows = []
+        for page in range(1, 101):
+            response = self.repo(path + "?" + urlencode(dict(filters, per_page=100, page=page)))
+            batch = response[collection] if collection else response
+            rows.extend(batch)
+            if len(batch) < 100:
+                return rows
+        raise ContractError("GitHub pagination limit reached; publication refused")
+
+
+def json_member(api, artifact, filename, *, optional=False):
+    require(not artifact["expired"] and artifact["size_in_bytes"] <= MAX_JSON_BYTES, "artifact expired or oversized")
+    archive = api.repo(f"actions/artifacts/{positive(artifact['id'])}/zip", binary=True)
+    with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+        members = [entry for entry in zipped.infolist() if entry.filename == filename]
+        if optional and not members:
+            require(not any(entry.filename.rsplit("/", 1)[-1] == filename for entry in zipped.infolist()),
+                    "artifact member has an unexpected path")
+            return None
+        require(len(members) == 1 and members[0].file_size <= MAX_JSON_BYTES, "artifact member missing, duplicated or oversized")
+        value = json.loads(zipped.read(members[0]))
+        require(not optional or value is not None, "optional artifact member cannot be null")
+        return value
+
+
+def official_tests_facts(payload: dict) -> dict:
+    test_cases: list[dict] = []
+
+    def walk(nodes: object, bundle_name: object) -> None:
+        for node in nodes if isinstance(nodes, list) else []:
+            if not isinstance(node, dict):
+                continue
+            node_type = node.get("nodeType")
+            if node_type == "Test Case":
+                test_cases.append(
+                    {"bundle": bundle_name, "identifier": node.get("nodeIdentifier"), "result": node.get("result")}
+                )
+                continue
+            walk(node.get("children"), node.get("name") if str(node_type).endswith("test bundle") else bundle_name)
+
+    walk(payload.get("testNodes"), None)
+    devices = payload.get("devices")
+    return {"test_cases": test_cases, "devices": devices if isinstance(devices, list) else []}
+
+def read_case_official(evidence):
+    """Read exported results after finalization, including nonzero runner exits."""
+    def read(path):
+        payload = decode(path.read_text())
+        counts = ("totalTestCount", "passedTests", "failedTests", "skippedTests")
+        for name in counts:
+            require(type(payload.get(name)) is int and payload[name] >= 0, "invalid official count: " + name)
+        require(payload["totalTestCount"] == sum(payload[name] for name in counts[1:]), "official counts do not add up")
+        require(payload.get("result") in {"Passed", "Failed", "Skipped", "Unknown"}, "invalid official result")
+        require(payload["result"] != "Passed" or (payload["passedTests"] == payload["totalTestCount"]
+                and payload["totalTestCount"] > 0), "passing official result has nonpassing counts")
+        result = {name: payload[name] for name in (*counts, "result")}
+        return result
+
+    path = evidence / "official-summary.json"
+    top = read(path) if path.is_file() else None
+    return top
 
 
 if __name__ == "__main__":

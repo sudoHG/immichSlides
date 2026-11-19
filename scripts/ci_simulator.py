@@ -2,6 +2,7 @@
 """Create and start a shard's fresh pinned simulator before archive downloads."""
 
 import argparse
+import json
 import os
 import subprocess
 import time
@@ -43,6 +44,21 @@ def create_and_boot_simulator(device, shard):
         raise ContractError(f"Early simulator boot failed (exit {completed.returncode}): {detail}")
     print(f"simulator-early-boot: submitted; elapsed={time.monotonic() - started:.1f}s", flush=True)
     return udid
+
+
+def simulator_device_class(udid, expected=None):
+    completed = subprocess.run(["xcrun", "simctl", "list", "devices", "available", "--json"],
+                               capture_output=True, check=True, timeout=60)
+    payload = json.loads(completed.stdout)
+    devices = [device for group in payload.get("devices", {}).values() for device in group if device.get("udid") == udid]
+    require(len(devices) == 1, "target UDID must identify one available simulator")
+    identifier = devices[0].get("deviceTypeIdentifier", "")
+    classes = {"iPhone-": "iphone", "iPad-": "ipad", "Apple-TV-": "tv"}
+    actual = next((kind for prefix, kind in classes.items()
+                   if identifier.startswith("com.apple.CoreSimulator.SimDeviceType." + prefix)), None)
+    require(actual is not None, "target simulator has an unknown device class")
+    require(expected is None or actual == expected, "smoke device does not match target simulator")
+    return actual
 
 
 def main(argv=None):

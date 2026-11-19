@@ -1,142 +1,36 @@
 #!/usr/bin/env python3
-"""Start the public controlled service and run one strict E2E suite without injecting state into the app."""
+"""Run short public-fixture smoke flows with private official-result export and disposal."""
 
 from __future__ import annotations
 
 import argparse
+import lzma
+import zlib
+from typing import Any, Iterator, Optional, Tuple
 from contextlib import contextmanager
 import hashlib
 import json
 import os
-import shlex
 import shutil
-import signal
-import socket
 import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
-from datetime import date
 from pathlib import Path
-from typing import Callable, Mapping, Sequence, TextIO
+from typing import Callable, Mapping, TextIO
 
-from ci_execution_diagnostics import IO_CAP_SECONDS, active, diagnostic_session, official_exports
+from ci_execution_diagnostics import active, diagnostic_session
 
-from run_offline_unit_tests import (
-    CommandError as OfflineCommandError,
-    TestResultsSummary,
-    parse_non_negative_int,
-    read_official_test_results_summary as read_unit_official_test_results_summary,
-)
-from album_server_narrow_contract import (
-    AlbumServerContractError,
-    evaluate_album_empty_evidence,
-)
-from strict_e2e_filter_contract import (
-    FILTER_VISUAL_SUITES,
-    FilterContractError,
-    evaluate_filter_visual_identity,
-    write_member_manifest,
-)
-from strict_e2e_filter_manifest import FILTER_PERSON_STEPS
-from strict_e2e_out_of_order_contract import (
-    OUT_OF_ORDER_VISUAL_SUITES,
-    OutOfOrderContractError,
-    audit_runner_inputs,
-    evaluate_out_of_order_identity,
-)
-from strict_e2e_p2_contract import (
-    P2_CASES,
-    RECORDING_FILE,
-    RECORDING_TIMING_FILE,
-    P2ContractError,
-    p2_selector,
-    read_xcresult_facts,
-    require_official_execution,
-    validate_raw_evidence,
-)
-from strict_e2e_photo_identity import (
-    IdentityAssertionError,
-    VISUAL_SUITES,
-    evaluate_visual_identity,
-)
-from access_lifecycle_contract import logical_bytes_contain
-from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
-from strict_e2e_reduce_motion import MotionCommandSession
+from run_offline_unit_tests import TestResultsSummary, parse_non_negative_int, read_official_test_results_summary as read_unit_official_test_results_summary
 
-from strict_e2e_runner_support import (
-    EXAMPLE_XCCONFIG,
-    TASK_XCCONFIG,
-    MIN_DATA_GIB,
-    XCODEBUILD_TIMEOUT_SECONDS,
-    REDUCE_MOTION_XCODE_ALLOWANCE_SECONDS,
-    RECORDING_START_TIMEOUT_SECONDS,
-    RECORDING_STOP_TIMEOUT_SECONDS,
-    WRONG_PUBLIC_API_KEY,
-    PRIVATE_RESULT_BUNDLE_ROOT,
-    RUNNER_SCENARIOS,
-    FORBIDDEN_EXACT_KEYS,
-    PLATFORM_SETTINGS,
-    IOS_FIRST_BATCH_SUITES,
-    FILTER_PERSON_SESSIONS,
-    IOS_FILTER_SUITES,
-    TVOS_FLOW_SUITES,
-    TVOS_CONTROL_SUITES,
-    TVOS_FILTER_SUITES,
-    IOS_LATE_IMAGE_SUITES,
-    TVOS_LATE_IMAGE_SUITES,
-    IOS_CASES,
-    TVOS_CASES,
-    LIFECYCLE_SUITES,
-    IMAGE_FAILURE_RECOVERY_SUITES,
-    RUNNER_SUITES,
-    FAILURE_SCENARIOS,
-    SUCCESS_SUITES,
-    DUAL_SERVER_SUITES,
-    ALBUM_EMPTY_SUITES,
-    SERVER_SWITCH_RECORDING_SUITES,
-    DISPLAY_POLICY_SUITES,
-    FIXTURE_A_ONLY_FILTER_SUITES,
-    SETTINGS_RESUME_SUITES,
-    CASE_E2E_IDS,
-    CommandError,
-    POST_TEST_PHASE_PREFIX,
-    InfrastructureTimeout,
-    parse_xcconfig,
-    prepare_task_xcconfig,
-    cleanup_task_xcconfig,
-    _is_forbidden_key,
-    write_app_launch_environment_audit,
-    prepare_evidence_directory,
-    scenario_settings,
-    validate_suite_scenario,
-    validate_suite_fixture,
-    read_source_sha,
-    read_source_dirty_paths,
-    write_case_manifest,
-    write_fixture_artifacts,
-    _is_already_booted,
-    prepare_simulator,
-    reset_simulator_app,
-    simulator_app_container,
-    destination_udid,
-    wait_for_service,
-    stop_exact_process,
-    audit_out_of_order_runner_inputs,
-    require_visual_identity,
-    _write_visual_runner_report,
-    require_official_single_pass,
-)
 
+from strict_e2e_runner_support import (CommandError, InfrastructureTimeout, MIN_DATA_GIB, XCODEBUILD_TIMEOUT_SECONDS, WRONG_PUBLIC_API_KEY, PRIVATE_RESULT_BUNDLE_ROOT, PLATFORM_SETTINGS, _is_forbidden_key, prepare_evidence_directory, read_source_sha, read_source_dirty_paths, write_case_manifest, write_fixture_artifacts, prepare_simulator, reset_simulator_app, destination_udid, wait_for_service, stop_exact_process)
+from strict_e2e_server import fixture_manifest, write_member_manifest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-
-
 # First-boot interaction can place even public fixture keys in XCTest's private activity archive.
-PRIVATE_RESULT_BUNDLE_SUITES = RUNNER_SUITES
 # Read-only Apple-tool allowance; evidence and capacity limits are in docs/CI_STRICT_RUNNER.md.
 OFFICIAL_EXPORT_TIMEOUT_SECONDS = 180
 
@@ -196,17 +90,6 @@ def read_official_test_results_summary(bundle: Path, *, export_budget=None) -> T
             return read_unit_official_test_results_summary(bundle, timeout_seconds=timeout)
     except subprocess.TimeoutExpired as error:
         raise InfrastructureTimeout("official-summary-export", timeout) from error
-
-
-def reserve_unreachable_server_url() -> tuple[str, socket.socket]:
-    reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        reservation.bind(("127.0.0.1", 0))
-        host, port = reservation.getsockname()
-        return f"http://{host}:{port}/api", reservation
-    except Exception:
-        reservation.close()
-        raise
 
 
 def write_sensitive_scan(evidence_dir: Path, sensitive_values: list[str], *, output_path: Path | None = None) -> None:
@@ -272,11 +155,8 @@ def export_private_result_bundle(
     enrich_failure_diagnostics: bool = False,
     first_failure_spool=None,
     first_failure_images=None,
-    resource_sampler=None,
-    retry_admission: bool = False,
 ) -> str:
-    from ci_flaky import official_result_step
-    admission_deadline = time.monotonic() + (export_timeout_seconds or 60) if retry_admission else None
+    from run_offline_unit_tests import official_result_step
     timeout = (export_budget.remaining("official-tests-export") if export_budget is not None else 60)
     if export_timeout_seconds is not None:
         timeout = min(timeout, export_timeout_seconds) if export_budget is not None else export_timeout_seconds
@@ -309,10 +189,9 @@ def export_private_result_bundle(
             "failedTests": summary.failed_tests, "skippedTests": summary.skipped_tests,
             "result": summary.result,
         }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    public_message = None
     if enrich_failure_diagnostics:
-        from ci_failure_diagnostics import (PUBLIC_FAILURE_MESSAGE_METHOD_BY_SUITE, legacy_diagnostics,
-                                            legacy_failure_messages, public_xctest_failure_message, unknown_diagnostics,
+        from ci_failure_diagnostics import (legacy_diagnostics,
+                                            legacy_failure_messages, unknown_diagnostics,
                                             public_failure_messages, failure_messages_diagnostics, first_failure_test_key,
                                             official_failure_count)
         failed = []
@@ -345,64 +224,21 @@ def export_private_result_bundle(
                 pass
             for node in failed:
                 key = first_failure_test_key(node.get("nodeIdentifier", ""))
-                if retry_admission:
-                    from ci_flaky import official_failure_outcomes, official_assertion_details, official_ui_duration
-                    kind = official_failure_outcomes(legacy_root).get(key)
-                    eligible = kind == "assertion"
-                    if kind == "uncategorized":
-                        try:
-                            available = (export_budget.remaining("official-tests-export") if export_budget is not None
-                                         else admission_deadline - time.monotonic())
-                            timeout = min(60, export_timeout_seconds or 60)
-                            if available >= timeout:
-                                with measured_official_export(export_budget), official_result_step("details-read"):
-                                    detail = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "test-details",
-                                        "--path", str(bundle), "--test-id", node["nodeIdentifier"], "--compact"],
-                                        capture_output=True, check=True, timeout=timeout)
-                                eligible = official_assertion_details(json.loads(detail.stdout), node["nodeIdentifier"])
-                        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError, InfrastructureTimeout):
-                            eligible = False
-                    try:
-                        node["retry_assertion"] = eligible and official_ui_duration(node) is not None
-                    except (ValueError, TypeError, OverflowError):
-                        node["retry_assertion"] = False
                 node.update(diagnostics.get(key, unknown_diagnostics()))
                 messages = public_failure_messages(raw_messages.get(key))
                 if messages is not None and official_failure_count(node) == len(messages):
                     node["failure_messages"] = messages
                     node.update(failure_messages_diagnostics(messages))
-                if len(failed) == 1 and key in PUBLIC_FAILURE_MESSAGE_METHOD_BY_SUITE.values():
-                    messages = raw_messages.get(key, [])
-                    public_message = public_xctest_failure_message(messages[0], method=key) if messages else None
             if first_failure_spool is not None:
                 from ci_failure_diagnostics import collect_first_failure_spool
                 directory, selectors = first_failure_spool
                 collect_first_failure_spool(directory, selectors, failed,
                     first_failure_images or evidence_dir / ("first-failure" + suffix))
-                from ci_failure_diagnostics import attach_native_tap_failure
-                attach_native_tap_failure(failed, raw_messages)
-            if resource_sampler is not None:
-                from strict_e2e_resource_diagnostics import (
-                    collect_native_activity, attach_pause_window_assertions, attach_failure_locations)
-                try:
-                    collect_native_activity(bundle, legacy_root, failed, resource_sampler,
-                        recorder=active(), timeout=min(2.0, export_timeout_seconds or 60))
-                except Exception:
-                    recorder = active()
-                    if recorder is not None:
-                        recorder.unavailable.add("xcode")
-                        recorder.truncate("worker-unavailable")
-                # Native collection can republish the resource; attach afterward so it cannot erase these families.
-                attach_pause_window_assertions(legacy_root, failed, recorder=active(), sequence=resource_sampler.sequence)
-                attach_failure_locations(legacy_root, failed, recorder=active(), sequence=resource_sampler.sequence,
-                    repo_root=REPO_ROOT)
             exported = (json.dumps(payload, sort_keys=True) + "\n").encode()
     (evidence_dir / f"official-tests{suffix}.json").write_bytes(exported)
     if enrich_failure_diagnostics:
         summary_payload = json.loads(summary_path.read_text())
         summary_payload.pop("message", None)
-        if public_message is not None:
-            summary_payload["message"] = public_message
         summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return hashlib.sha256(exported).hexdigest()
 
@@ -481,130 +317,6 @@ def make_test_environment(
     return environment
 
 
-def result_bundle_name(suite: str) -> str:
-    if suite not in RUNNER_SUITES:
-        raise CommandError(f"Unknown strict E2E suite: {suite}.")
-    return f"strict-{suite}.xcresult"
-
-
-def resolve_suite_selector(platform: str, suite: str) -> str:
-    settings = PLATFORM_SETTINGS.get(platform)
-    if settings is None:
-        raise CommandError("platform must be ios or tvos.")
-    if suite in IMAGE_FAILURE_RECOVERY_SUITES:
-        required_platform, selector = IMAGE_FAILURE_RECOVERY_SUITES[suite]
-        if platform != required_platform:
-            raise CommandError(f"{suite} can only run on the {required_platform} platform.")
-        return selector
-    if suite in LIFECYCLE_SUITES:
-        required_platform, selector = LIFECYCLE_SUITES[suite]
-        if platform != required_platform:
-            raise CommandError(f"{suite} can only run on the {required_platform} platform.")
-        return selector
-    if suite in P2_CASES:
-        try:
-            return p2_selector(suite, platform)
-        except P2ContractError as error:
-            raise CommandError(str(error)) from error
-    if suite == "smoke":
-        _scheme, _test_plan, test_method = settings
-        return f"immichSlidesUITests/StrictE2ESmokeUITests/{test_method}"
-    tvos_selector = (
-        TVOS_FLOW_SUITES.get(suite) or TVOS_CONTROL_SUITES.get(suite) or TVOS_FILTER_SUITES.get(suite)
-    )
-    if tvos_selector is not None:
-        if platform != "tvos":
-            raise CommandError("The tvOS flow can only run on the tvos platform.")
-        return tvos_selector
-    if platform == "tvos":
-        late_selector = TVOS_LATE_IMAGE_SUITES.get(suite)
-        if late_selector is not None:
-            return late_selector
-    selector = (
-        IOS_FIRST_BATCH_SUITES.get(suite)
-        or IOS_FILTER_SUITES.get(suite)
-        or IOS_LATE_IMAGE_SUITES.get(suite)
-    )
-    if selector is None:
-        raise CommandError(f"Unknown strict E2E suite: {suite}.")
-    if platform != "ios":
-        raise CommandError("The iPhone/iPad journey can only run on the ios platform.")
-    return selector
-
-
-def merge_official_summaries(summaries: Sequence[TestResultsSummary]) -> dict[str, object]:
-    if not summaries:
-        raise CommandError("Official test counts are missing; cannot merge.")
-    return {
-        "totalTestCount": sum(item.total_test_count for item in summaries),
-        "passedTests": sum(item.passed_tests for item in summaries),
-        "failedTests": sum(item.failed_tests for item in summaries),
-        "skippedTests": sum(item.skipped_tests for item in summaries),
-        "result": summaries[-1].result if all(item.result.lower() == "passed" for item in summaries) else "failed",
-    }
-
-
-def build_xcodebuild_command(
-    *,
-    repo_root: Path,
-    platform: str,
-    destination: str,
-    derived_data_path: Path,
-    result_bundle_path: Path,
-    server_url: str,
-    suite: str = "smoke",
-    scenario: str = "normal",
-    evidence_dir: Path | None = None,
-    server_url_b: str | None = None,
-    server_b_url: str | None = None,
-    only_testing: str | None = None,
-) -> list[str]:
-    settings = PLATFORM_SETTINGS.get(platform)
-    if settings is None:
-        raise CommandError("platform must be ios or tvos.")
-    scheme, test_plan, _test_method = settings
-    uses_settings_resume = suite in SETTINGS_RESUME_SUITES
-    if uses_settings_resume:
-        scheme = (
-            "immichSlides-iOS-settings-resume"
-            if platform == "ios"
-            else "immichSlides-tvOS-settings-resume"
-        )
-    selector = only_testing or resolve_suite_selector(platform, suite)
-    command = [
-        "xcodebuild",
-        "-disableAutomaticPackageResolution",
-        "-onlyUsePackageVersionsFromResolvedFile",
-        "-project",
-        str(repo_root / "immichSlides.xcodeproj"),
-        "-scheme",
-        scheme,
-        "-testPlan",
-        test_plan,
-        *(["-configuration", "Release"] if uses_settings_resume else []),
-        "-destination",
-        destination,
-        "-derivedDataPath",
-        str(derived_data_path),
-        "-resultBundlePath",
-        str(result_bundle_path),
-        "-collect-test-diagnostics",
-        "never",
-        f"STRICT_E2E_INPUT_SERVER_URL={server_url}",
-        f"STRICT_E2E_INPUT_SCENARIO={scenario}",
-    ]
-    if uses_settings_resume:
-        command.extend(["-parallel-testing-enabled", "NO", "-skip-testing:immichSlidesTests"])
-    if evidence_dir is not None:
-        command.append(f"STRICT_E2E_EVIDENCE_DIR={evidence_dir}")
-    peer = server_url_b or server_b_url
-    if peer:
-        command.append(f"STRICT_E2E_INPUT_SERVER_URL_B={peer}")
-        command.append(f"STRICT_E2E_INPUT_SERVER_B_URL={peer}")
-    command.extend([f"-only-testing:{selector}", "test"])
-    return command
-
-
 def data_available_gib() -> float:
     return shutil.disk_usage("/System/Volumes/Data").free / (1024**3)
 
@@ -618,142 +330,6 @@ def ensure_disk_for_xcodebuild(
             f"Available space on /System/Volumes/Data is {available:.1f} GiB, below the "
             f"{min_free_gib} GiB threshold configured by --min-free-gib; stopping Xcode tests."
         )
-
-
-
-
-def start_screen_recording(
-    simulator_udid: str, video_path: Path, log_path: Path
-) -> tuple[subprocess.Popen[bytes], float]:
-    with log_path.open("wb") as log_file:
-        process = subprocess.Popen(
-            ["xcrun", "simctl", "io", simulator_udid, "recordVideo", "--codec=h264", "--force", str(video_path)],
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
-    deadline = time.monotonic() + RECORDING_START_TIMEOUT_SECONDS
-    did_start = False
-    try:
-        while True:
-            if b"Recording started" in log_path.read_bytes():
-                did_start = True
-                return process, time.time()
-            if process.poll() is not None:
-                raise CommandError(f"Simulator recording exited early with exit {process.returncode}.")
-            if time.monotonic() >= deadline:
-                raise CommandError(f"Simulator recording did not start within {RECORDING_START_TIMEOUT_SECONDS}s; continuous recording is unavailable.")
-            time.sleep(0.1)
-    finally:
-        if not did_start:
-            stop_exact_process(process)
-
-
-def stop_screen_recording(process: subprocess.Popen[bytes]) -> int:
-    if process.poll() is not None:
-        raise CommandError(f"Simulator recording exited before the test finished (exit {process.returncode}); the recording is not continuous.")
-    process.send_signal(signal.SIGINT)
-    try:
-        return process.wait(timeout=RECORDING_STOP_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired as error:
-        process.kill()
-        process.wait(timeout=5)
-        raise CommandError("Simulator recording did not finish after SIGINT; the recording is unreliable.") from error
-
-
-
-
-
-def require_p2_evidence(
-    evidence_dir: Path,
-    *,
-    suite: str,
-    platform: str,
-    simulator_udid: str,
-    fixture_set: str,
-    result_bundle_path: Path,
-) -> dict[str, object]:
-    try:
-        execution = require_official_execution(
-            read_xcresult_facts(result_bundle_path),
-            suite=suite,
-            platform=platform,
-            simulator_udid=simulator_udid,
-        )
-        payload = validate_raw_evidence(evidence_dir, suite, fixture_set)
-    except P2ContractError as error:
-        _write_visual_runner_report(evidence_dir, {"verdict": "FAIL", "suite": suite, "error": str(error)})
-        raise CommandError(f"P2 raw evidence is incomplete; cannot mark SUCCESS: {error}", code=2) from error
-    payload["execution"] = execution
-    _write_visual_runner_report(evidence_dir, payload)
-    return payload
-
-
-def reset_late_image_fixture(server_url: str, public_key: str) -> None:
-    request = urllib.request.Request(
-        server_url + "/test/late-image", data=b'{"action":"reset"}',
-        headers={"x-api-key": public_key, "Content-Type": "application/json"}, method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=5) as response:
-            state = json.loads(response.read())
-            if response.status != 200 or not isinstance(state, dict) or state.get("pending") != 0:
-                raise ValueError("Previous hold is still pending")
-    except (OSError, ValueError) as error:
-        raise CommandError("Late image fixture reset failed before listed retry", code=2) from error
-
-
-class StrictRetryEvidence:
-    """Keep each case's prior outputs out of the final visual/timeline validation."""
-
-    def __init__(self, evidence, case, service_logs):
-        self.evidence, self.case = evidence, case
-        self.service_logs = [path for path in service_logs if path is not None]
-        self.offsets = {path.name: path.stat().st_size for path in self.service_logs}
-        self.before = {path.name: path.read_bytes() for path in evidence.iterdir() if path.is_file()}
-
-    def before_retry(self):
-        archive = self.evidence / "attempt-1" / self.case
-        archive.mkdir(parents=True)
-        active = {path.name for path in self.service_logs}
-        for path in self.evidence.iterdir():
-            if not path.is_file():
-                continue
-            payload = path.read_bytes()
-            if path.name in active:
-                (archive / path.name).write_bytes(payload[self.offsets[path.name]:])
-                self.offsets[path.name] = len(payload)
-            elif path.name == "simulator-reset.log":
-                (archive / path.name).write_bytes(payload)
-            elif self.before.get(path.name) != payload:
-                path.rename(archive / path.name)
-                if path.name in self.before:
-                    path.write_bytes(self.before[path.name])
-        (self.evidence / (self.case + "-service-log-offsets.json")).write_text(
-            json.dumps(self.offsets, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-    def finish(self):
-        for index, path in enumerate(self.service_logs):
-            target = "redacted-request.log" if index == 0 else "request-log-b.log"
-            (self.evidence / target).write_bytes(path.read_bytes()[self.offsets[path.name]:])
-
-    def audit(self, *, suite, scenario, fixture_set, fixture_hash, server_url):
-        from strict_e2e_filter_contract import (FilterContractError, assert_request_log_contract,
-                                                assert_foreign_server_ids_absent, _extract_ids_from_request_log)
-        for index, path in enumerate(self.service_logs):
-            first = self.evidence / "attempt-1" / self.case / path.name
-            segments = ([first.read_text(encoding="utf-8")] if first.is_file() else [])
-            segments.append(path.read_bytes()[self.offsets[path.name]:].decode("utf-8"))
-            for log_text in segments:
-                if scenario == "out-of-order":
-                    audit_out_of_order_runner_inputs(fixture_set=fixture_set, observed_hash=fixture_hash,
-                                                    service_log=log_text, server_url=server_url)
-                if suite in DUAL_SERVER_SUITES:
-                    try:
-                        assert_request_log_contract(log_text, forbidden=(PUBLIC_API_KEY, "x-api-key"))
-                        assert_foreign_server_ids_absent(_extract_ids_from_request_log(log_text),
-                                                         fixture_set if index == 0 else "b")
-                    except FilterContractError as error:
-                        raise CommandError(str(error), code=2) from error
 
 
 def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str], log_path: Path,
@@ -790,23 +366,13 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     stdout = sys.stdout if stdout is None else stdout
     stderr = sys.stderr if stderr is None else stderr
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--platform", required=True, choices=sorted(PLATFORM_SETTINGS))
+    parser.add_argument("--platform", required=True, choices=("ios", "tvos"))
     parser.add_argument("--destination", required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--diagnostics-receipt", type=Path, help="shared job measurement ledger")
-    parser.add_argument("--local-force-app-hang-capture", action="store_true",
-        help="local diagnostic exercise: capture once after the first App CPU read; ignored in CI")
-    parser.add_argument("--local-force-reduce-motion-failure", action="store_true",
-        help="local restoration exercise: fail after enabling Reduce Motion; ignored in CI")
-    parser.add_argument("--native-diagnostics-allowance-seconds", type=int, choices=range(3), default=2,
-                        help="prepaid native failure-extraction allowance supplied by the job coordinator")
-    parser.add_argument("--process-sampling-allowance-seconds", type=float,
-                        help="prepaid process-sampling allowance supplied by the serial job coordinator")
     parser.add_argument("--simulator-boot-submitted", action="store_true",
                         help="Reuse a dedicated device's submitted boot; still require bootstatus, readiness and resets")
-    parser.add_argument("--fixture-set", choices=("a", "b"), default="a")
-    parser.add_argument("--scenario", choices=RUNNER_SCENARIOS, default="normal")
-    parser.add_argument("--suite", choices=(*RUNNER_SUITES, "smoke-flow"), default="smoke")
+    parser.add_argument("--suite", choices=("smoke-flow",), default="smoke-flow")
     parser.add_argument("--smoke-device", choices=("iphone", "ipad", "tv"))
     parser.add_argument("--smoke-scope", choices=("core", "full"), default="full")
     parser.add_argument("--smoke-flow", help="Debug one manifest flow; never a complete smoke group")
@@ -818,13 +384,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--derived-data-path", type=Path, help="shard-scoped DerivedData outside evidence; retained for reuse")
     parser.add_argument("--cloned-source-packages-path", type=Path, help="shared package downloads outside DerivedData and evidence")
     parser.add_argument("--configuration", choices=("Debug", "Release"), help="explicit shard configuration; defaults to the existing suite setting")
-    parser.add_argument("--listed-retry-device", choices=("iphone", "ipad", "tv"),
-                        help="Enable base-registry listed-only retries for this exact strict device class; requires warm reuse")
-    parser.add_argument("--nightly-retry-method", action="append", default=[], help="Run only admitted failed methods; no internal retry")
-    parser.add_argument("--nightly-retry-source", type=Path, help="First-attempt public evidence for a filtered person session")
     parser.add_argument("--cold-timeout-seconds", type=parse_non_negative_int, help="explicit warm-up budget (default: 300 seconds)")
     parser.add_argument("--warm-timeout-seconds", type=parse_non_negative_int,
-                        help="base reuse budget before P2 command-channel reserves (default: 300 seconds)")
+                        help="warm reuse budget (default: 300 seconds)")
     parser.add_argument(
         "--min-free-gib",
         type=parse_non_negative_int,
@@ -841,846 +403,330 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         except (CommandError, ValueError, OSError, subprocess.SubprocessError) as error:
             print(f"CommandError: {error}", file=stderr)
             return getattr(error, "code", 2)
-    if arguments.smoke_device or arguments.smoke_flow or arguments.smoke_archive or arguments.smoke_control_path:
-        parser.error("--smoke-device/--smoke-flow require --suite smoke-flow")
-    from ci_flaky import nightly_retry_enabled
-    nightly_retry = nightly_retry_enabled(REPO_ROOT, os.environ)
-    if arguments.nightly_retry_method:
-        allowed = ([session["selector"].split("/", 1)[1] for session in FILTER_PERSON_SESSIONS]
-                   if arguments.suite == "filter-person" else [resolve_suite_selector(arguments.platform, arguments.suite).split("/", 1)[1]])
-        if not (nightly_retry and arguments.test_without_building and not arguments.listed_retry_device
-                and len(set(arguments.nightly_retry_method)) == len(arguments.nightly_retry_method)
-                and all(method in allowed for method in arguments.nightly_retry_method)
-                and (arguments.suite != "filter-person" or arguments.nightly_retry_source)):
-            parser.error("nightly retry requires hosted main, warm reuse and one exact failed suite method")
-    from strict_e2e_resource_diagnostics import NativeActivityBudget, SAMPLER_WALL_BUDGET_SECONDS, APP_HANG_JOB_CAP
-    allowance = arguments.process_sampling_allowance_seconds
-    if allowance is not None and not 0 <= allowance <= SAMPLER_WALL_BUDGET_SECONDS:
-        parser.error("process sampling allowance must be finite and within the job sampling budget")
-    if active() is not None:
-        active().native_activity_budget = NativeActivityBudget(arguments.native_diagnostics_allowance_seconds)
-        active().prepaid_process_sampling = False
-        active().process_sampling_remaining_seconds = allowance
-        if allowance is not None and "xcode" in active().unavailable:
-            active().prepaid_process_sampling = True
-            active().process_sampler_wall_seconds = SAMPLER_WALL_BUDGET_SECONDS - allowance
-            # Unknown inherited attempts cannot grant another job-wide stack capture allowance.
-            active().app_hang_capture_attempts = APP_HANG_JOB_CAP
-    if arguments.listed_retry_device and not arguments.test_without_building:
-        parser.error("listed-only retry requires --test-without-building")
-    if arguments.listed_retry_device and (arguments.platform == "tvos") != (arguments.listed_retry_device == "tv"):
-        parser.error("listed retry device does not match platform")
-    if arguments.listed_retry_device:
-        from ci_flaky import require_retryable_strict_suite
-        try:
-            require_retryable_strict_suite(arguments.suite)
-        except ValueError as error:
-            parser.error(str(error))
-    if not (arguments.warm_up_only or arguments.test_without_building) and (arguments.cold_timeout_seconds is not None or arguments.warm_timeout_seconds is not None):
-        parser.error("cold/warm timeout options require explicit warm-up/reuse")
-    arguments.cold_timeout_seconds = XCODEBUILD_TIMEOUT_SECONDS if arguments.cold_timeout_seconds is None else arguments.cold_timeout_seconds
-    arguments.warm_timeout_seconds = XCODEBUILD_TIMEOUT_SECONDS if arguments.warm_timeout_seconds is None else arguments.warm_timeout_seconds
-    if not arguments.cold_timeout_seconds or not arguments.warm_timeout_seconds:
-        parser.error("cold and warm timeouts must be positive")
-    execution_timeout_seconds = (arguments.warm_timeout_seconds if arguments.test_without_building else XCODEBUILD_TIMEOUT_SECONDS)
-    if arguments.suite == "p2-reduce-motion":
-        execution_timeout_seconds += REDUCE_MOTION_XCODE_ALLOWANCE_SECONDS
-    if (arguments.warm_up_only or arguments.test_without_building) and not arguments.derived_data_path:
-        parser.error("warm-up/reuse requires --derived-data-path")
-    if arguments.derived_data_path and not (arguments.warm_up_only or arguments.test_without_building):
-        parser.error("--derived-data-path requires explicit warm-up/reuse")
-    if (arguments.configuration or arguments.cloned_source_packages_path) and not arguments.derived_data_path:
-        parser.error("configuration/shared packages require explicit warm-up/reuse")
-    try:
-        validate_suite_scenario(arguments.suite, arguments.scenario)
-        validate_suite_fixture(arguments.suite, arguments.fixture_set)
-        if arguments.suite in (*P2_CASES, *LIFECYCLE_SUITES, *IMAGE_FAILURE_RECOVERY_SUITES):
-            resolve_suite_selector(arguments.platform, arguments.suite)
-    except CommandError as error:
-        print(f"CommandError: {error}", file=stderr)
-        return error.code
 
-    if arguments.warm_up_only:
-        from strict_e2e_build import warm_up
-        try:
-            ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
-            if "Simulator" not in arguments.destination:
-                raise CommandError("strict E2E only accepts Simulator destinations.")
-            destination_udid(arguments.destination)
-            # Preflight before creating output or invoking Xcode, including dangling links.
-            from ci_build_archive import workspace_preflight
-            workspace_preflight(REPO_ROOT)
-            prepare_evidence_directory(arguments.evidence_dir)
-            derived = arguments.derived_data_path.resolve()
-            packages = (arguments.cloned_source_packages_path or derived.parent / "SourcePackages").resolve()
-            warm_up(root=REPO_ROOT, platform=arguments.platform, suite=arguments.suite,
-                    configuration=arguments.configuration, destination=arguments.destination,
-                    derived=derived, packages=packages, evidence=arguments.evidence_dir,
-                    timeout=arguments.cold_timeout_seconds, execute=run_command)
-            write_sensitive_scan(arguments.evidence_dir, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY])
-            return 0
-        except (CommandError, ValueError, OSError, subprocess.SubprocessError) as error:
-            print(f"CommandError: {error}", file=stderr)
-            return getattr(error, "code", 2)
 
-    config_path = REPO_ROOT / TASK_XCCONFIG
-    did_create_config = False
-    owns_evidence_directory = False
-    service_process: subprocess.Popen[bytes] | None = None
-    service_process_b: subprocess.Popen[bytes] | None = None
-    recording_process: subprocess.Popen[bytes] | None = None
-    unreachable_reservation: socket.socket | None = None
-    server_url_b: str | None = None
-    service_log_b_path: Path | None = None
-    derived_data_path = (arguments.derived_data_path or arguments.evidence_dir / "DerivedData").resolve()
-    warm_receipt = None
-    primary_exit_code = 0
-    did_complete_checks = False
-    cleanup_failures: list[str] = []
-    case_manifest: dict[str, object] | None = None
-    result_bundle_path: Path | None = None
-    private_bundles: list[tuple[Path, str]] = []
-    private_test_runs: list[Path] = []
-    first_failure_spools = {}
-    resource_samplers = {}
-    app_hang_case_state = {}
-    official_tests_digests: dict[str, str] = {}
-    official_export_budgets = {}
-    motion_session = None
-    recorder = active()
-    case_start_sequence = recorder.sequence if recorder is not None else 0
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+GZIP_MAGIC = b"\x1f\x8b"
+GZIP_DEFLATE_CM = 8
+XZ_MAGIC = b"\xfd7zXZ\x00"
+ZSTD_SKIPPABLE_MAGIC_LO = 0x184D2A50
+ZSTD_SKIPPABLE_MAGIC_HI = 0x184D2A5F
+ZSTD_SKIPPABLE_MAGIC_TAIL = b"\x2a\x4d\x18"
+DECOMPRESS_PROBE_BYTES = 512
+DECOMPRESS_CHUNK_BYTES = 64 * 1024
+_LIBZSTD: Any = "unset"
 
-    def record_timeout(error: InfrastructureTimeout) -> None:
-        nonlocal primary_exit_code
-        primary_exit_code = primary_exit_code or error.code
-        if case_manifest is not None:
-            case_manifest.setdefault("infrastructure", []).append(error.entry)
-            case_manifest.update(result="FAILED", exit_code=primary_exit_code)
-            write_case_manifest(arguments.evidence_dir, case_manifest)
+def logical_bytes_contain(data: bytes, values: Sequence[str]) -> bool:
+    # Decode valid frames; scan cleartext metadata and any bytes that cannot be decoded.
+    # Scan chunk by chunk without joining the whole blob.
+    needles = [value.encode("utf-8") for value in values if value]
+    if not needles:
+        return False
+    overlap = max(len(needle) for needle in needles) - 1
+    tail = b""
+    for part in _iter_logical_parts(data):
+        window = tail + part if tail else part
+        if any(needle in window for needle in needles):
+            return True
+        tail = window[-overlap:] if overlap > 0 else b""
+    return False
 
-    def run_preparation(operation, *args, **kwargs):
-        from ci_failure_diagnostics import preparation_first_failure
-        recorder = active()
-        sequence = recorder.sequence if recorder else 0
-        try:
-            return operation(*args, **kwargs)
-        except CommandError:
-            ledger = recorder.receipt() if recorder else None
-            if ledger is not None:
-                ledger["events"] = [event for event in ledger["events"] if event["sequence"] > sequence]
-            case_manifest["first_failure"] = preparation_first_failure(ledger)
-            raise
+def logical_content_bytes(data: bytes) -> bytes:
+    """Decode valid frames while retaining skippable metadata and undecodable raw bytes."""
+    return b"".join(_iter_logical_parts(data))
 
-    try:
-        ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
-        if "Simulator" not in arguments.destination:
-            raise CommandError("strict E2E only accepts Simulator destinations.")
-        simulator_udid = destination_udid(arguments.destination)
-        retry_device_class = None
-        if arguments.derived_data_path:
-            from strict_e2e_build import load_warm_build, validate_paths, prepare_test_run, warm_test_command, validate_warm_products
-            packages = (arguments.cloned_source_packages_path or derived_data_path.parent / "SourcePackages").resolve()
-            validate_paths(REPO_ROOT, derived_data_path, arguments.evidence_dir, packages)
-            if arguments.test_without_building:
-                warm_receipt, warm_run = load_warm_build(
-                    REPO_ROOT, arguments.platform, arguments.suite, arguments.configuration,
-                    arguments.destination, derived_data_path,
-                )
-        prepare_evidence_directory(arguments.evidence_dir)
-        owns_evidence_directory = True
-        if arguments.suite == "filter-person" and arguments.nightly_retry_method:
-            source = arguments.nightly_retry_source
-            first_manifest = json.loads((source / "case-manifest.json").read_text())
-            if not (first_manifest["source_sha"] == read_source_sha(REPO_ROOT)
-                    and first_manifest["suite"] == arguments.suite and first_manifest["fixture_set"] == arguments.fixture_set):
-                raise CommandError("Filtered person retry source identity differs from this case.")
-        if arguments.suite != "filter-person":
-            result_bundle_path = prepare_private_result_bundle_path(arguments.suite)
-            private_bundles.append((result_bundle_path, ""))
-        case_manifest = {
-            "source_sha": read_source_sha(REPO_ROOT),
-            "process_sampling_prepaid": bool(getattr(active(), "prepaid_process_sampling", False)),
-            "platform": arguments.platform,
-            "destination": arguments.destination,
-            "os": "iOS Simulator" if arguments.platform == "ios" else "tvOS Simulator",
-            "suite": arguments.suite,
-            "scenario": arguments.scenario,
-            "fixture_set": arguments.fixture_set,
-            "e2e_ids": CASE_E2E_IDS.get(arguments.suite, []),
-            "human_review": "NOT_RUN",
-            "result": "RUNNING",
-        }
-        if arguments.suite in PRIVATE_RESULT_BUNDLE_SUITES:
-            case_manifest["source_dirty_paths"] = read_source_dirty_paths(REPO_ROOT)
-        write_case_manifest(arguments.evidence_dir, case_manifest)
-
-        if warm_receipt is None:
-            xcconfig_audit = prepare_task_xcconfig(REPO_ROOT / EXAMPLE_XCCONFIG, config_path)
-            did_create_config = True
-        else:
-            xcconfig_audit = {"private_configuration_present": False, "warm_build": True}
-        (arguments.evidence_dir / "xcconfig-audit.json").write_text(
-            json.dumps(xcconfig_audit, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        write_app_launch_environment_audit(arguments.evidence_dir, arguments.suite)
-
-        preparation_lines = []
-        preparation_log = None
-        def report_preparation(line):
-            preparation_lines.append(line)
-            print(line, flush=True)
-        try:
-            _, preparation_log = run_preparation(prepare_simulator, simulator_udid, report=report_preparation,
-                                                  boot_submitted=arguments.simulator_boot_submitted)
-        finally:
-            (arguments.evidence_dir / "simulator-preparation.log").write_text(
-                preparation_log or ("\n".join(preparation_lines) + "\n"), encoding="utf-8")
-        if arguments.listed_retry_device:
-            from ci_flaky import simulator_device_class
-            retry_device_class = simulator_device_class(simulator_udid, arguments.listed_retry_device)
-
-        for command in (["xcodebuild", "-checkFirstLaunchStatus"], ["xcodebuild", "-version"]):
-            completed = subprocess.run(command, capture_output=True, text=True, check=False)
-            if completed.returncode != 0:
-                raise CommandError(f"{' '.join(command)} failed with exit {completed.returncode}.")
-            with (arguments.evidence_dir / "xcode-environment.log").open("a", encoding="utf-8") as log:
-                log.write(f"$ {shlex.join(command)}\n{completed.stdout}")
-
-        ready_path = arguments.evidence_dir / "service-ready.json"
-        service_log_path = arguments.evidence_dir / "service.log"
-        fixture_payload = write_fixture_artifacts(arguments.evidence_dir, arguments.fixture_set)
-        validate_suite_fixture(arguments.suite, str(fixture_payload["fixture_set"]))
-        if arguments.suite in DUAL_SERVER_SUITES and arguments.fixture_set != "a":
-            raise CommandError(f"{arguments.suite} must start from server A; use --fixture-set a.")
-        if arguments.suite in DUAL_SERVER_SUITES:
-            write_member_manifest(arguments.evidence_dir / "member-manifest-a.json", "a")
-            write_member_manifest(arguments.evidence_dir / "member-manifest-b.json", "b")
-            peer_fixture = fixture_manifest("b")
-            (arguments.evidence_dir / "fixture-manifest-b.json").write_text(
-                json.dumps(peer_fixture, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-        if case_manifest is not None:
-            case_manifest["fixture_sha256"] = fixture_payload["fixture_sha256"]
-            write_case_manifest(arguments.evidence_dir, case_manifest)
-        service_scenario, input_key, starts_service = scenario_settings(arguments.scenario)
-        if starts_service:
-            service_startup_path = arguments.evidence_dir / "service-startup.log"
-            with open(service_startup_path, "wb", opener=lambda path, flags: os.open(path, flags, 0o600)) as log:
-                service_process = subprocess.Popen(
-                    [
-                        sys.executable,
-                        str(REPO_ROOT / "scripts/strict_e2e_server.py"),
-                        "--host",
-                        "127.0.0.1",
-                        "--port",
-                        "0",
-                        "--fixture-set",
-                        arguments.fixture_set,
-                        "--scenario",
-                        service_scenario,
-                        "--ready-file",
-                        str(ready_path),
-                        "--log-file",
-                        str(service_log_path),
-                    ],
-                    cwd=REPO_ROOT,
-                    stdout=log,
-                    stderr=subprocess.DEVNULL,
-                )
-            host, port = wait_for_service(ready_path, service_process, startup_log=service_startup_path)
-            server_url = f"http://{host}:{port}/api"
-            if arguments.suite in DUAL_SERVER_SUITES:
-                ready_b = arguments.evidence_dir / "service-b-ready.json"
-                service_log_b_path = arguments.evidence_dir / "service-b.log"
-                service_startup_b_path = arguments.evidence_dir / "service-b-startup.log"
-                with open(service_startup_b_path, "wb", opener=lambda path, flags: os.open(path, flags, 0o600)) as log:
-                    service_process_b = subprocess.Popen(
-                        [
-                            sys.executable,
-                            str(REPO_ROOT / "scripts/strict_e2e_server.py"),
-                            "--host",
-                            "127.0.0.1",
-                            "--port",
-                            "0",
-                            "--fixture-set",
-                            "b",
-                            "--scenario",
-                            service_scenario,
-                            "--ready-file",
-                            str(ready_b),
-                            "--log-file",
-                            str(service_log_b_path),
-                        ],
-                        cwd=REPO_ROOT,
-                        stdout=log,
-                        stderr=subprocess.DEVNULL,
-                    )
-                host_b, port_b = wait_for_service(ready_b, service_process_b, startup_log=service_startup_b_path)
-                server_url_b = f"http://{host_b}:{port_b}/api"
-        else:
-            server_url, unreachable_reservation = reserve_unreachable_server_url()
-            ready_path.write_text(
-                json.dumps({"listening": False, "scenario": "unreachable"}, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            service_log_path.write_text("scenario=unreachable listening=false\n", encoding="utf-8")
-
-        reset_log = run_preparation(reset_simulator_app, simulator_udid, platform=arguments.platform, boot_submitted=True)
-        (arguments.evidence_dir / "simulator-reset.log").write_text(reset_log, encoding="utf-8")
-
-        environment = make_test_environment(
-            os.environ,
-            server_url=server_url,
-            public_key=input_key,
-            scenario=arguments.scenario,
-            server_url_b=server_url_b,
-        )
-        environment["STRICT_E2E_EVIDENCE_DIR"] = str(arguments.evidence_dir.resolve())
-        if warm_receipt is not None:
-            case_manifest["warm_build_identity"] = warm_receipt["identity"]
-
-        effective_result_bundle = result_bundle_path
-        retry_sessions = {}
-        def execute_case(command, log_path):
-            nonlocal effective_result_bundle
-            from ci_failure_diagnostics import configure_first_failure_attempt, first_failure_environment
-            selectors = ([session["selector"] for session in FILTER_PERSON_SESSIONS] if arguments.suite == "filter-person"
-                         else [resolve_suite_selector(arguments.platform, arguments.suite)])
-            def configure_call(call, number):
-                bundle = Path(call[call.index("-resultBundlePath") + 1])
-                spool = bundle.parent / "first-failure-spool"
-                if "-xctestrun" in call:
-                    try:
-                        configured, prepared = configure_first_failure_attempt(call, spool, selectors)
-                        private_test_runs.append(prepared)
-                        first_failure_spools[bundle] = (spool, selectors, number)
-                        return configured
-                    except (OSError, ValueError, TypeError, KeyError):
-                        # Calls retain the recorder-disabled baseline; configuration failure cannot reuse a spool.
-                        pass
-                else:
-                    environment.update(first_failure_environment(spool, selectors))
-                    first_failure_spools[bundle] = (spool, selectors, number)
-                return call
-            from ci_flaky import check_retry_flags
-            def measured_run(call, operation):
-                from strict_e2e_resource_diagnostics import CaptureCleanupError, CaseSampler
-                bundle = Path(call[call.index("-resultBundlePath") + 1])
-                sampler = CaseSampler(active(), simulator_udid,
-                    force_app_hang_capture=arguments.local_force_app_hang_capture,
-                    app_hang_case_state=app_hang_case_state,
-                    duration_limit_seconds=execution_timeout_seconds).start()
-                resource_samplers[bundle] = sampler
-                try:
-                    return operation()
-                finally:
-                    try:
-                        sampler.stop()
-                    except CaptureCleanupError as error:
-                        cleanup_failures.append(f"app_hang_capture: {type(error).__name__}: {error}")
-                    except Exception:
-                        recorder = active()
-                        if recorder is not None:
-                            recorder.unavailable.add("xcode")
-                            recorder.truncate("worker-unavailable")
-            check_retry_flags(command)
-            if arguments.listed_retry_device:
-                from functools import partial
-                from ci_flaky import load_registry, registry_revision, run_xcode_attempts, read_xcode_observations
-                from ci_summary import test_identity
-                registry_ref = registry_revision(REPO_ROOT, os.environ)
-                registry, registry_hash = load_registry(REPO_ROOT, registry_ref)
-                attempt_evidence = StrictRetryEvidence(arguments.evidence_dir, log_path.stem,
-                                                        [service_log_path, service_log_b_path])
-                def reset_retry():
-                    if arguments.suite == "late-image":
-                        retry_reset_log = reset_simulator_app(simulator_udid, platform=arguments.platform, boot_submitted=True)
-                        reset_late_image_fixture(server_url, input_key)
-                        attempt_evidence.before_retry()
-                    else:
-                        attempt_evidence.before_retry()
-                        retry_reset_log = reset_simulator_app(simulator_udid, platform=arguments.platform, boot_submitted=True)
-                    (arguments.evidence_dir / (log_path.stem + "-retry-reset.log")).write_text(retry_reset_log, encoding="utf-8")
-                    with (arguments.evidence_dir / "simulator-reset.log").open("a") as log:
-                        log.write(retry_reset_log)
-                def execute_attempt(call):
-                    attempt_bundle = Path(call[call.index("-resultBundlePath") + 1])
-                    if call != command and all(path != attempt_bundle for path, _suffix in private_bundles):
-                        original = Path(command[command.index("-resultBundlePath") + 1])
-                        for index, (path, suffix) in enumerate(private_bundles):
-                            if path == original:
-                                private_bundles[index] = (path, suffix + "-attempt-1")
-                        private_bundles.append((attempt_bundle, "-" + log_path.stem + "-attempt-2"))
-                    configured = configure_call(call, 1 if call == command else 2)
-                    ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
-                    started = time.monotonic()
-                    code = None
-                    products_unchanged = False
-                    try:
-                        code = measured_run(configured, lambda: run_command(
-                            configured, cwd=REPO_ROOT, environment=environment, log_path=log_path,
-                            timeout_seconds=arguments.warm_timeout_seconds))
-                    except CommandError as error:
-                        code = 124 if isinstance(error.__cause__, subprocess.TimeoutExpired) else error.code
-                        raise
-                    finally:
-                        from strict_e2e_build import write_json
-                        try:
-                            validate_warm_products(derived_data_path, warm_receipt)
-                            products_unchanged = True
-                        finally:
-                            write_json(arguments.evidence_dir / (log_path.stem + "-reuse.json"), {
-                                "duration_seconds": time.monotonic() - started, "exit_code": code,
-                                "timeout_seconds": arguments.warm_timeout_seconds,
-                                "action": "test-without-building", "products_unchanged": products_unchanged,
-                            })
-                    return code, time.monotonic() - started
-                def case_identity(key):
-                    return test_identity("strict", key, device=retry_device_class,
-                                         configuration=warm_receipt["identity"]["configuration"], suite=arguments.suite,
-                                         scenario=arguments.scenario, fixture=arguments.fixture_set)
-                retry_result = run_xcode_attempts(command, registry, tier="strict", environment="hermetic", today=date.today(),
-                                                 identity_for_key=case_identity, reset=reset_retry, execute=execute_attempt,
-                                                 read=partial(read_xcode_observations, expected_device=(simulator_udid, retry_device_class)),
-                                                 allocate_bundle=lambda: prepare_private_result_bundle_path(arguments.suite + "-retry"))
-                attempt_evidence.finish()
-                from strict_e2e_build import write_json
-                write_json(arguments.evidence_dir / (log_path.stem + "-attempts.json"),
-                           dict(retry_result, registry_revision=registry_ref, registry_sha256=registry_hash))
-                retry_sessions[log_path.stem] = dict(retry_result, registry_revision=registry_ref)
-                write_json(arguments.evidence_dir / "retry-invocations.json", {"sessions": retry_sessions})
-                effective_result_bundle = Path(retry_result["effective_bundle"])
-                if case_manifest is not None:
-                    case_manifest.setdefault("retry_observations", []).extend(retry_result["observed"])
-                    case_manifest["flaky_registry_sha256"] = registry_hash
-                    case_manifest["flaky_registry_revision"] = registry_ref
-                attempt_evidence.audit(suite=arguments.suite, scenario=arguments.scenario,
-                                       fixture_set=arguments.fixture_set,
-                                       fixture_hash=str(fixture_payload["fixture_sha256"]), server_url=server_url)
-                for record in retry_result["observed"]:
-                    if len(record["attempts"]) > 1:
-                        print(f"{record['identity']['key']}: {record['outcome']}, attempts=2", file=stdout, flush=True)
-                return retry_result["exit_code"]
-            command = configure_call(command, 1)
-            started = time.monotonic()
-            code = measured_run(command, lambda: run_command(
-                command, cwd=REPO_ROOT, environment=environment, log_path=log_path,
-                timeout_seconds=execution_timeout_seconds))
-            if warm_receipt is not None:
-                validate_warm_products(derived_data_path, warm_receipt)
-                from strict_e2e_build import write_json
-                write_json(arguments.evidence_dir / (log_path.stem + "-reuse.json"), {
-                    "duration_seconds": time.monotonic() - started, "exit_code": code,
-                    "timeout_seconds": execution_timeout_seconds,
-                    "action": "test-without-building", "products_unchanged": True,
-                })
-            return code
-        (arguments.evidence_dir / "runner-input-audit.json").write_text(
-            json.dumps(
-                {
-                    "input_keys_present": [
-                        key
-                        for key in (
-                            "STRICT_E2E_INPUT_PUBLIC_KEY",
-                            "STRICT_E2E_INPUT_SCENARIO",
-                            "STRICT_E2E_INPUT_SERVER_URL",
-                            "STRICT_E2E_INPUT_SERVER_URL_B",
-                            "STRICT_E2E_INPUT_SERVER_B_URL",
-                        )
-                        if key in environment
-                    ],
-                    "scenario": arguments.scenario,
-                    "suite": arguments.suite,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        person_summaries: list[TestResultsSummary] | None = None
-        person_failed_exit = 0
-        # Give each person rule a clean install and first launch; clearing the selection is not an intermediate state, or playback mode reverts to random.
-        if arguments.suite == "filter-person":
-            reset_logs = [reset_log]
-            commands: list[str] = []
-            summaries: list[TestResultsSummary] = []
-            log_parts: list[str] = []
-            for index, session in enumerate(FILTER_PERSON_SESSIONS):
-                if arguments.nightly_retry_method and session["selector"].split("/", 1)[1] not in arguments.nightly_retry_method:
-                    source = arguments.nightly_retry_source
-                    payload = json.loads((source / f"official-summary-{session['name']}.json").read_text())
-                    cached = TestResultsSummary(payload["totalTestCount"], payload["passedTests"], payload["failedTests"],
-                                                payload["skippedTests"], payload["result"])
-                    require_official_single_pass(cached)
-                    summaries.append(cached)
-                    for prefix in ("official-summary", "official-tests"):
-                        path = source / f"{prefix}-{session['name']}.json"
-                        shutil.copy2(path, arguments.evidence_dir / path.name)
-                    screenshot = source / (FILTER_PERSON_STEPS[session["visual_step"]] + ".png")
-                    if screenshot.is_file():
-                        shutil.copy2(screenshot, arguments.evidence_dir / screenshot.name)
+def _iter_logical_parts(data: bytes) -> Iterator[bytes]:
+    if not data:
+        return
+    starts = _compression_magic_offsets(data)
+    index = 0
+    cursor = 0
+    length = len(data)
+    while index < length:
+        while cursor < len(starts) and starts[cursor] < index:
+            cursor += 1
+        at_magic = cursor < len(starts) and starts[cursor] == index
+        if at_magic:
+            frame = _decompress_frame_at(data, index)
+            if frame is not None:
+                payload, consumed = frame
+                if consumed <= 0:
+                    yield data[index : index + 1]
+                    index += 1
                     continue
-                if index > 0:
-                    reset_logs.append(reset_simulator_app(simulator_udid, platform=arguments.platform, boot_submitted=True))
-                    with (arguments.evidence_dir / "simulator-reset.log").open("a") as log:
-                        log.write(reset_logs[-1])
-                session_bundle = prepare_private_result_bundle_path(f"filter-person-{session['name']}")
-                private_bundles.append((session_bundle, f"-{session['name']}"))
-                session_log = arguments.evidence_dir / f"xcodebuild-{session['name']}.log"
-                command = build_xcodebuild_command(
-                    repo_root=REPO_ROOT,
-                    platform=arguments.platform,
-                    destination=arguments.destination,
-                    derived_data_path=derived_data_path,
-                    result_bundle_path=session_bundle,
-                    server_url=server_url,
-                    suite=arguments.suite,
-                    scenario=arguments.scenario,
-                    evidence_dir=arguments.evidence_dir,
-                    server_url_b=server_url_b,
-                    only_testing=session["selector"],
-                )
-                if warm_receipt is not None:
-                    run = prepare_test_run(warm_run, session_bundle.parent, environment)
-                    private_test_runs.append(run)
-                    command = warm_test_command(run, arguments.destination, session_bundle, session["selector"])
-                commands.append(shlex.join(command))
-                exit_code = execute_case(command, session_log)
-                if arguments.listed_retry_device:
-                    session_bundle = effective_result_bundle
-                primary_exit_code = exit_code
-                if exit_code != 0:
-                    (arguments.evidence_dir / "xcodebuild.log").write_text(
-                        "\n".join([*log_parts, session_log.read_text(encoding="utf-8")]),
-                        encoding="utf-8",
-                    )
-                    (arguments.evidence_dir / "xcodebuild-command.txt").write_text(
-                        "\n".join(commands) + "\n", encoding="utf-8"
-                    )
-                    if not arguments.nightly_retry_method or exit_code != 65:
-                        raise CommandError(f"xcodebuild strict E2E failed with exit {exit_code}.", code=exit_code)
-                    person_failed_exit = 65
-                export_budget = official_export_budgets.setdefault(session_bundle, OfficialExportBudget())
-                summary = read_official_test_results_summary(session_bundle, export_budget=export_budget)
-                if exit_code == 0:
-                    require_official_single_pass(summary)
-                elif (summary.total_test_count, summary.passed_tests, summary.failed_tests, summary.skipped_tests, summary.result) != (1, 0, 1, 0, "Failed"):
-                    raise CommandError("Nightly person official failure summary is incomplete.")
-                summaries.append(summary)
-                log_parts.append(session_log.read_text(encoding="utf-8"))
-            (arguments.evidence_dir / "xcodebuild-command.txt").write_text(
-                "\n".join(commands) + "\n", encoding="utf-8"
-            )
-            if case_manifest is not None:
-                case_manifest["command"] = "\n".join(commands)
-                write_case_manifest(arguments.evidence_dir, case_manifest)
-            (arguments.evidence_dir / "xcodebuild.log").write_text("\n".join(log_parts), encoding="utf-8")
-            person_summaries = summaries
-            primary_exit_code = person_failed_exit
-        else:
-            command = build_xcodebuild_command(
-                repo_root=REPO_ROOT,
-                platform=arguments.platform,
-                destination=arguments.destination,
-                derived_data_path=derived_data_path,
-                result_bundle_path=result_bundle_path,
-                server_url=server_url,
-                suite=arguments.suite,
-                scenario=arguments.scenario,
-                evidence_dir=arguments.evidence_dir,
-                server_url_b=server_url_b,
-            )
-            if warm_receipt is not None:
-                run = prepare_test_run(warm_run, result_bundle_path.parent, environment)
-                private_test_runs.append(run)
-                command = warm_test_command(run, arguments.destination, result_bundle_path,
-                                            resolve_suite_selector(arguments.platform, arguments.suite))
-            (arguments.evidence_dir / "xcodebuild-command.txt").write_text(
-                shlex.join(command) + "\n", encoding="utf-8"
-            )
-            if case_manifest is not None:
-                case_manifest["command"] = shlex.join(command)
-                write_case_manifest(arguments.evidence_dir, case_manifest)
-            if (arguments.suite in P2_CASES and P2_CASES[arguments.suite].video) or arguments.suite in SERVER_SWITCH_RECORDING_SUITES:
-                recording_process, recording_started = start_screen_recording(
-                    simulator_udid,
-                    arguments.evidence_dir / RECORDING_FILE,
-                    arguments.evidence_dir / "screen-recording.log",
-                )
-            if arguments.suite == "p2-reduce-motion":
-                motion_session = MotionCommandSession(simulator_udid, arguments.evidence_dir,
-                    force_failure_after_enable=arguments.local_force_reduce_motion_failure and not os.environ.get("CI"))
-            try:
-                if motion_session is not None:
-                    motion_session.start()
-                exit_code = execute_case(command, arguments.evidence_dir / "xcodebuild.log")
-                primary_exit_code = exit_code
-            finally:
-                if motion_session is not None:
-                    cleanup_failures.extend(run_cleanup_actions([("restore_reduce_motion", motion_session.close)]))
-            if motion_session is not None and motion_session.failure and exit_code == 0:
-                raise CommandError("System Reduce Motion command handshake failed.", code=2)
-            if arguments.listed_retry_device:
-                result_bundle_path = effective_result_bundle
-            primary_exit_code = exit_code
-            if recording_process is not None:
-                finished_recording, recording_process = recording_process, None
-                recording_exit = stop_screen_recording(finished_recording)
-                (arguments.evidence_dir / RECORDING_TIMING_FILE).write_text(
-                    json.dumps(
-                        {
-                            "started_wall_time": recording_started,
-                            "stopped_wall_time": time.time(),
-                            "stop_exit": recording_exit,
-                        },
-                        indent=2,
-                        sort_keys=True,
-                    )
-                    + "\n",
-                    encoding="utf-8",
-                )
-            if exit_code != 0:
-                raise CommandError(f"xcodebuild strict E2E failed with exit {exit_code}.", code=exit_code)
-            export_budget = official_export_budgets.setdefault(result_bundle_path, OfficialExportBudget())
-            summary = read_official_test_results_summary(result_bundle_path, export_budget=export_budget)
-            require_official_single_pass(summary)
-        if service_log_path.is_file() and not arguments.listed_retry_device:
-            (arguments.evidence_dir / "redacted-request.log").write_bytes(service_log_path.read_bytes())
-        if arguments.scenario == "out-of-order":
-            log_text = (
-                (arguments.evidence_dir / "redacted-request.log").read_text(encoding="utf-8")
-                if (arguments.evidence_dir / "redacted-request.log").is_file() else ""
-            )
-            audit_payload = audit_out_of_order_runner_inputs(
-                fixture_set=arguments.fixture_set,
-                observed_hash=str(fixture_payload["fixture_sha256"]),
-                service_log=log_text,
-                server_url=server_url,
-            )
-            (arguments.evidence_dir / "runner-input-audit.json").write_text(
-                json.dumps(audit_payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-            )
-        if service_log_b_path is not None and service_log_b_path.is_file() and not arguments.listed_retry_device:
-            (arguments.evidence_dir / "request-log-b.log").write_bytes(service_log_b_path.read_bytes())
-        if person_summaries is not None:
-            summary_payload = merge_official_summaries(person_summaries)
-        else:
-            summary_payload = {
-                "totalTestCount": summary.total_test_count,
-                "passedTests": summary.passed_tests,
-                "failedTests": summary.failed_tests,
-                "skippedTests": summary.skipped_tests,
-                "result": summary.result,
-            }
-        (arguments.evidence_dir / "official-summary.json").write_text(
-            json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        if person_failed_exit:
-            raise CommandError("xcodebuild strict E2E person session failed with exit 65.", code=65)
-        from ci_failure_diagnostics import public_fixture_validator_scope
-        print(POST_TEST_PHASE_PREFIX + "contract", file=stdout, flush=True)
-        with public_fixture_validator_scope(arguments.evidence_dir, screenshots=True):
-            if arguments.suite in P2_CASES:
-                visual_payload = require_p2_evidence(
-                    arguments.evidence_dir,
-                    suite=arguments.suite,
-                    platform=arguments.platform,
-                    simulator_udid=simulator_udid,
-                    fixture_set=arguments.fixture_set,
-                    result_bundle_path=result_bundle_path,
-                )
-                if case_manifest is not None:
-                    case_manifest.update(visual_payload["execution"])
-            else:
-                visual_payload = require_visual_identity(arguments.evidence_dir, arguments.suite,
-                                                        fixture_set=arguments.fixture_set,
-                                                        configuration=arguments.configuration)
-        if case_manifest is not None:
-            case_manifest["result"] = ("flaky-passed" if any(record["outcome"] == "flaky-passed"
-                                                          for record in case_manifest.get("retry_observations", [])) else summary.result)
-            case_manifest["exit_code"] = 0
-            case_manifest["official_summary"] = summary_payload
-            case_manifest["visual_identity"] = visual_payload
-            write_case_manifest(arguments.evidence_dir, case_manifest)
-        print(json.dumps(summary_payload, sort_keys=True), file=stdout)
-        did_complete_checks = True
-    except (CommandError, OfflineCommandError, ValueError) as error:
-        if isinstance(error, InfrastructureTimeout):
-            record_timeout(error)
-        print(f"{type(error).__name__}: {error}", file=stderr)
-        primary_exit_code = primary_exit_code or getattr(error, "code", 2)
-        if owns_evidence_directory and case_manifest is not None:
-            case_manifest["result"] = "FAILED"
-            case_manifest["exit_code"] = primary_exit_code
-            try:
-                write_case_manifest(arguments.evidence_dir, case_manifest)
-            except OSError as write_error:
-                cleanup_failures.append(f"write_case_manifest: {type(write_error).__name__}: {write_error}")
-    except (OSError, subprocess.SubprocessError) as error:
-        print(f"Evidence or process I/O failed: {error}", file=stderr)
-        primary_exit_code = primary_exit_code or 2
-    finally:
-        lifecycle: dict[str, object] = {}
+                if payload:
+                    yield payload
+                index += consumed
+                continue
+            # Failed decoding cannot prove these bytes are safe to discard.
+            cursor += 1
+        nxt = starts[cursor] if cursor < len(starts) else length
+        if nxt <= index:
+            yield data[index : index + 1]
+            index += 1
+            continue
+        yield data[index:nxt]
+        index = nxt
 
-        def export_and_hold_bundle(bundle: Path, suffix: str) -> None:
-            if not bundle.is_dir():
-                if primary_exit_code == 0:
-                    raise CommandError("Missing private result bundle; cannot finalize a successful run.")
-                return
-            try:
-                digest = export_private_result_bundle(
-                    bundle, arguments.evidence_dir, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY], suffix=suffix,
-                    enrich_failure_diagnostics=True,
-                    export_budget=official_export_budgets.setdefault(bundle, OfficialExportBudget()),
-                    first_failure_spool=first_failure_spools[bundle][:2] if bundle in first_failure_spools else None,
-                    resource_sampler=resource_samplers.get(bundle),
-                    retry_admission=nightly_retry and not arguments.nightly_retry_method,
-                )
-            except InfrastructureTimeout as error:
-                record_timeout(error)
-                raise
-            finally:
-                retain_case_diagnostics(bundle)
-            official_tests_digests[suffix] = digest
-            if case_manifest is not None and bundle in first_failure_spools:
-                from ci_failure_diagnostics import attach_first_failures
-                attach_first_failures(case_manifest.get("retry_observations", []),
-                    json.loads((arguments.evidence_dir / ("official-tests" + suffix + ".json")).read_text()),
-                    first_failure_spools[bundle][2])
-            if case_manifest is not None:
-                if bundle == result_bundle_path:
-                    case_manifest["official_tests_sha256"] = digest
-                if suffix:
-                    case_manifest["official_session_tests_sha256"] = dict(official_tests_digests)
-                else:
-                    case_manifest["official_tests_sha256"] = digest
-                write_case_manifest(arguments.evidence_dir, case_manifest)
+def _compression_magic_offsets(data: bytes) -> list[int]:
+    # One forward find pass per magic; never rerun several finds over the remaining bytes for each offset.
+    found: set[int] = set()
+    for magic in (ZSTD_MAGIC, GZIP_MAGIC, XZ_MAGIC):
+        start = 0
+        while True:
+            at = data.find(magic, start)
+            if at < 0:
+                break
+            found.add(at)
+            start = at + 1
+    for prefix in range(0x50, 0x60):
+        magic = bytes((prefix,)) + ZSTD_SKIPPABLE_MAGIC_TAIL
+        start = 0
+        while True:
+            at = data.find(magic, start)
+            if at < 0:
+                break
+            found.add(at)
+            start = at + 1
+    return sorted(found)
 
-        def retain_case_diagnostics(bundle: Path) -> None:
-            recorder = active()
-            receipt = recorder.receipt() if recorder is not None else None
-            if case_manifest is None or receipt is None or not resource_samplers:
-                return
-            sequences = {sampler.sequence for sampler in resource_samplers.values()}
-            # Retain this case's numeric export timings alongside its hosting metadata.
-            receipt["events"] = [event for event in receipt["events"]
-                if event["scope"] == "xcode" and (
-                    event["phase"] == "official-export" and event["sequence"] > case_start_sequence
-                    or event["phase"] == "test-execution" and event["state"] == "started"
-                    and event["sequence"] in sequences and event["sample"] is not None)]
-            receipt["case_resources"] = [case for case in receipt.get("case_resources", [])
-                                          if case["sequence"] in sequences]
-            from strict_e2e_resource_diagnostics import attach_continue_watch
-            sampler = resource_samplers.get(bundle)
-            if sampler is not None:
-                attach_continue_watch(receipt, arguments.evidence_dir, platform=arguments.platform,
-                    suite=arguments.suite, result=case_manifest.get("result"), sequence=sampler.sequence)
-            case_manifest["bounded_diagnostics"] = receipt
-            write_case_manifest(arguments.evidence_dir, case_manifest)
+def _decompress_frame_at(data: bytes, offset: int) -> Optional[Tuple[bytes, int]]:
+    skippable = _zstd_skippable_size(data, offset)
+    if skippable is not None:
+        # Zstd skips this metadata, but it is stored as cleartext in the evidence.
+        return data[offset + 8 : offset + skippable], skippable
+    if data.startswith(ZSTD_MAGIC, offset):
+        return _decompress_zstd_frame(data, offset)
+    if data.startswith(GZIP_MAGIC, offset):
+        return _decompress_gzip_frame(data, offset)
+    if data.startswith(XZ_MAGIC, offset):
+        return _decompress_xz_frame(data, offset)
+    return None
 
-        def stop_recording() -> None:
-            if recording_process is not None:
-                stop_screen_recording(recording_process)
+def _zstd_skippable_size(data: bytes, offset: int) -> Optional[int]:
+    if offset + 8 > len(data):
+        return None
+    magic = int.from_bytes(data[offset : offset + 4], "little")
+    if magic < ZSTD_SKIPPABLE_MAGIC_LO or magic > ZSTD_SKIPPABLE_MAGIC_HI:
+        return None
+    size = int.from_bytes(data[offset + 4 : offset + 8], "little")
+    consumed = 8 + size
+    if offset + consumed > len(data):
+        return None
+    return consumed
 
-        def stop_service() -> None:
-            if service_process is None:
-                return
-            lifecycle["pid"] = service_process.pid
-            lifecycle["exit"] = stop_exact_process(service_process)
+def _decompress_zstd_frame(data: bytes, offset: int) -> Optional[Tuple[bytes, int]]:
+    remaining = len(data) - offset
+    if remaining <= 0:
+        return None
+    py314 = _zstd_py314()
+    if py314 is not None:
+        errors: tuple[type[BaseException], ...] = (ValueError, OSError, AttributeError, TypeError)
+        zstd_error = getattr(py314, "ZstdError", None)
+        if isinstance(zstd_error, type):
+            errors = errors + (zstd_error,)
+        try:
+            view = memoryview(data)[offset:]
+            consumed = int(py314.get_frame_size(view))
+            if 0 < consumed <= remaining:
+                payload = py314.decompress(data[offset : offset + consumed])
+                return payload, consumed
+        except errors:
+            pass
+    ctypes_frame = _zstd_ctypes_frame(data, offset)
+    if ctypes_frame is not None:
+        return ctypes_frame
+    # Once ctypes/py314 has ruled out a valid frame, do not hand the whole remaining blob to the CLI.
+    if py314 is None and _load_libzstd() is None:
+        return _zstd_cli_frame(data, offset)
+    return None
 
-        def stop_service_b() -> None:
-            if service_process_b is None:
-                return
-            lifecycle["pid_b"] = service_process_b.pid
-            lifecycle["exit_b"] = stop_exact_process(service_process_b)
+def _zstd_py314() -> Any:
+    try:
+        from compression import zstd as module
+    except ImportError:
+        return None
+    return module
 
-        def close_unreachable_reservation() -> None:
-            if unreachable_reservation is not None:
-                unreachable_reservation.close()
+def _zstd_source_pointer(data: bytes, offset: int) -> Optional[int]:
+    import ctypes
 
-        def write_lifecycle() -> None:
-            if owns_evidence_directory and lifecycle:
-                (arguments.evidence_dir / "service-lifecycle.json").write_text(
-                    json.dumps(lifecycle, indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8",
-                )
+    pythonapi = ctypes.pythonapi
+    pythonapi.PyBytes_AsString.restype = ctypes.c_void_p
+    pythonapi.PyBytes_AsString.argtypes = [ctypes.py_object]
+    base = pythonapi.PyBytes_AsString(data)
+    if not base:
+        return None
+    return int(base) + offset
 
-        actions: list[tuple[str, Callable[[], None]]] = [
-            ("stop_screen_recording", stop_recording),
-            ("stop_service", stop_service),
-            ("stop_service_b", stop_service_b),
-            ("close_unreachable_reservation", close_unreachable_reservation),
-            ("write_service_lifecycle", write_lifecycle),
+def _zstd_ctypes_frame(data: bytes, offset: int) -> Optional[Tuple[bytes, int]]:
+    lib = _load_libzstd()
+    if lib is None:
+        return None
+    import ctypes
+
+    remaining = len(data) - offset
+    if remaining <= 0:
+        return None
+    src = _zstd_source_pointer(data, offset)
+    if src is None:
+        return None
+    consumed = lib.ZSTD_findFrameCompressedSize(src, remaining)
+    if lib.ZSTD_isError(consumed):
+        return None
+    consumed_i = int(consumed)
+    if consumed_i <= 0 or consumed_i > remaining:
+        return None
+    content_size = lib.ZSTD_getFrameContentSize(src, consumed_i)
+    if content_size in (2**64 - 1, 2**64 - 2):
+        dst_capacity = max(consumed_i * 8, 64)
+    else:
+        dst_capacity = max(int(content_size), 1)
+    dst = ctypes.create_string_buffer(dst_capacity)
+    written = lib.ZSTD_decompress(dst, dst_capacity, src, consumed_i)
+    if lib.ZSTD_isError(written):
+        return None
+    return dst.raw[: int(written)], consumed_i
+
+def _load_libzstd() -> Any:
+    global _LIBZSTD
+    if _LIBZSTD != "unset":
+        return _LIBZSTD
+    import ctypes
+
+    for path in (
+        "/opt/homebrew/lib/libzstd.dylib",
+        "/usr/local/lib/libzstd.dylib",
+        "libzstd.dylib",
+        "libzstd.so.1",
+        "libzstd.so",
+    ):
+        try:
+            lib = ctypes.CDLL(path)
+        except OSError:
+            continue
+        lib.ZSTD_findFrameCompressedSize.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        lib.ZSTD_findFrameCompressedSize.restype = ctypes.c_size_t
+        lib.ZSTD_getFrameContentSize.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        lib.ZSTD_getFrameContentSize.restype = ctypes.c_ulonglong
+        lib.ZSTD_decompress.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
         ]
-        if motion_session is not None:
-            actions.insert(0, ("restore_reduce_motion", motion_session.close))
-        if did_create_config:
-            actions.append(
-                (
-                    "cleanup_task_xcconfig",
-                    lambda: cleanup_task_xcconfig(REPO_ROOT / EXAMPLE_XCCONFIG, config_path),
+        lib.ZSTD_decompress.restype = ctypes.c_size_t
+        lib.ZSTD_isError.argtypes = [ctypes.c_size_t]
+        lib.ZSTD_isError.restype = ctypes.c_uint
+        _LIBZSTD = lib
+        return lib
+    _LIBZSTD = None
+    return None
+
+def _zstd_cli_frame(data: bytes, offset: int) -> Optional[Tuple[bytes, int]]:
+    import shutil
+    import subprocess
+
+    consumed = _zstd_frame_size(data, offset)
+    if consumed is None:
+        return None
+    binary = shutil.which("zstd")
+    if binary is None:
+        return None
+    blob = data[offset : offset + consumed]
+    completed = subprocess.run(
+        [binary, "-d", "-c", "-q"],
+        input=blob,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    return completed.stdout, consumed
+
+def _zstd_frame_size(data: bytes, offset: int) -> Optional[int]:
+    # Walk framing only; the CLI still validates and decompresses the exact frame.
+    # Format: https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md
+    if not data.startswith(ZSTD_MAGIC, offset) or offset + 5 > len(data):
+        return None
+    descriptor = data[offset + 4]
+    if descriptor & 0x08:  # Reserved bit must be zero.
+        return None
+    single_segment = bool(descriptor & 0x20)
+    content_size_flag = descriptor >> 6
+    content_size_bytes = (int(single_segment), 2, 4, 8)[content_size_flag]
+    dictionary_id_bytes = (0, 1, 2, 4)[descriptor & 3]
+    cursor = offset + 5 + int(not single_segment) + dictionary_id_bytes + content_size_bytes
+    if cursor > len(data):
+        return None
+    while cursor + 3 <= len(data):
+        header = int.from_bytes(data[cursor : cursor + 3], "little")
+        cursor += 3
+        block_type = (header >> 1) & 3
+        if block_type == 3:
+            return None
+        block_size = header >> 3
+        cursor += 1 if block_type == 1 else block_size
+        if cursor > len(data):
+            return None
+        if header & 1:
+            cursor += 4 if descriptor & 4 else 0
+            return cursor - offset if cursor <= len(data) else None
+    return None
+
+def _decompress_gzip_frame(data: bytes, offset: int) -> Optional[Tuple[bytes, int]]:
+    remaining = len(data) - offset
+    if remaining < 3 or data[offset + 2] != GZIP_DEFLATE_CM:
+        return None
+    return _decompress_chunked(
+        data,
+        offset,
+        zlib.decompressobj(16 + zlib.MAX_WBITS),
+        zlib.error,
+    )
+
+def _decompress_xz_frame(data: bytes, offset: int) -> Optional[Tuple[bytes, int]]:
+    return _decompress_chunked(data, offset, lzma.LZMADecompressor(), lzma.LZMAError)
+
+def _decompress_chunked(
+    data: bytes,
+    offset: int,
+    decoder: Any,
+    error_type: type[BaseException],
+) -> Optional[Tuple[bytes, int]]:
+    remaining = len(data) - offset
+    if remaining <= 0:
+        return None
+    parts: list[bytes] = []
+    consumed = 0
+    try:
+        first = min(DECOMPRESS_PROBE_BYTES, remaining)
+        parts.append(decoder.decompress(data[offset : offset + first]))
+        consumed = first
+        unused = decoder.unused_data
+        if unused:
+            consumed -= len(unused)
+        else:
+            while consumed < remaining:
+                if getattr(decoder, "eof", False):
+                    break
+                take = min(DECOMPRESS_CHUNK_BYTES, remaining - consumed)
+                parts.append(
+                    decoder.decompress(data[offset + consumed : offset + consumed + take])
                 )
-            )
-        if not arguments.derived_data_path and derived_data_path.exists():
-            actions.append(("remove_derived_data", lambda: shutil.rmtree(derived_data_path)))
-        for run in private_test_runs:
-            actions.append(("remove_private_test_run", lambda path=run: path.unlink(missing_ok=True)))
-        for bundle, suffix in private_bundles:
-            actions.append(("export_and_hold_bundle" + suffix, lambda b=bundle, s=suffix: export_and_hold_bundle(b, s)))
-        print(POST_TEST_PHASE_PREFIX + "cleanup", file=stdout, flush=True)
-        cleanup_failures.extend(run_cleanup_actions(actions))
-
-        recorder = active()
-        if recorder is not None and recorder.xcode_timed_out:
-            exports = recorder.collect("xcode", lambda: official_exports(arguments.evidence_dir,
-                [bundle for bundle, _suffix in private_bundles]), cap=IO_CAP_SECONDS)
-            recorder.event("xcode", "official-export", "completed", recorder.next_sequence(), exports=exports)
-
-        if owns_evidence_directory:
-            if cleanup_failures:
-                try:
-                    (arguments.evidence_dir / "cleanup-failures.json").write_text(
-                        json.dumps({"failures": cleanup_failures}, indent=2, sort_keys=True) + "\n",
-                        encoding="utf-8",
-                    )
-                except OSError as error:
-                    cleanup_failures.append(f"write_cleanup_failures: {type(error).__name__}: {error}")
-            try:
-                print(POST_TEST_PHASE_PREFIX + "sensitive-scan", file=stdout, flush=True)
-                write_sensitive_scan(
-                    arguments.evidence_dir,
-                    [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY],
-                )
-            except CommandError as error:
-                cleanup_failures.append(f"sensitive_scan: {error}")
-
-        successful = did_complete_checks and primary_exit_code == 0 and not cleanup_failures
-        print(POST_TEST_PHASE_PREFIX + "private-result-finalization", file=stdout, flush=True)
-        for spool, _selectors, _number in first_failure_spools.values():
-            shutil.rmtree(spool, ignore_errors=True)
-        for bundle, suffix in private_bundles:
-            cleanup_failures.extend(finalize_private_result_bundle(
-                bundle, arguments.evidence_dir, official_tests_digests.get(suffix),
-                successful=successful and not cleanup_failures, suffix=suffix,
-            ))
-
-        if owns_evidence_directory and cleanup_failures:
-            try:
-                (arguments.evidence_dir / "cleanup-failures.json").write_text(
-                    json.dumps({"failures": cleanup_failures}, indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8",
-                )
-            except OSError as error:
-                cleanup_failures.append(f"write_cleanup_failures: {type(error).__name__}: {error}")
-        print(POST_TEST_PHASE_PREFIX + "complete", file=stdout, flush=True)
-
-    if cleanup_failures:
-        print("Cleanup or evidence finalization failed: " + " | ".join(cleanup_failures), file=stderr)
-    return choose_exit_code(primary_exit_code, cleanup_failures)
-
+                consumed += take
+                unused = decoder.unused_data
+                if unused:
+                    consumed -= len(unused)
+                    break
+        flush = getattr(decoder, "flush", None)
+        if callable(flush):
+            parts.append(flush())
+    except error_type:
+        return None
+    if consumed <= 0:
+        return None
+    return b"".join(parts), consumed
 
 if __name__ == "__main__":
     from ci_local import local_main

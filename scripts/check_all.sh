@@ -18,10 +18,8 @@ Runs, in order:
   5. localization usage (user-facing literals missing from the string catalog)
   6. Python test prerequisites: Swift, zstd CLI, Pillow and PyYAML (missing tools fail)
   7. workflow policy (pinned actions, permissions, timeouts and trusted execution)
-  8. Known-flaky registry (format, duplicates and static test existence)
-  9. Xcode Cloud Apple TV plan population and fixture-copy contract
- 10. Python tests with per-test result records
- 11. Optional Xcode offline unit tests for iOS and tvOS (only with --with-unit-tests)
+  8. Python tests with per-test result records
+  9. Optional Xcode offline unit tests for iOS and tvOS (only with --with-unit-tests)
 
 Options:
   --strict-ci             Refuse a dirty tree instead of snapshotting it.

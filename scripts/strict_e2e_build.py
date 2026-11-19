@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ci_build_archive import check_products, file_hash, inventory, measure_signing, pack_products, workspace_preflight
 from ci_summary import require, sha
-from strict_e2e_runner_support import CommandError, PLATFORM_SETTINGS, SETTINGS_RESUME_SUITES, _is_forbidden_key
+from strict_e2e_runner_support import CommandError, PLATFORM_SETTINGS, _is_forbidden_key
 
 RECEIPT = "strict-warm-build.json"
 SMOKE_RECEIPT = "strict-smoke-archive.json"
@@ -169,11 +169,6 @@ def build_settings(platform, suite, configuration=None):
     if suite == "smoke-flow":
         # The UI-only scheme avoids compiling @testable unit targets against a Release app.
         scheme += "-settings-resume"
-    elif suite in SETTINGS_RESUME_SUITES:
-        scheme += "-settings-resume"
-        if configuration not in (None, "Release"):
-            raise CommandError("Settings-resume suites require Release.")
-        configuration = "Release"
     return scheme, plan, configuration or "Debug"
 
 
