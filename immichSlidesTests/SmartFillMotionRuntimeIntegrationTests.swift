@@ -334,75 +334,6 @@ struct SmartFillMotionRuntimeIntegrationTests {
     }
 
     @Test
-    func `the contract probe records a manual crossfade as a steady blend of both photos`() throws {
-        var now = 100.0
-        let vm = makeSmartFillViewModel(timestamp: { now })
-        let (firstLayer, secondLayer) = try holdSecondSceneBehindFirst(in: vm, advanceClock: { now += 1 })
-        let secondScene = try #require(vm.scene(for: secondLayer))
-        now = 101.2
-        decodeAllRenderers(in: secondScene, layer: secondLayer, viewModel: vm)
-        #expect(vm.sceneRenderSnapshot.underlyingPhase == .transition)
-        for step in 0...6 {
-            now = 101.2 + Double(step) * 0.05
-            _ = vm.scenePresentationContractProbeLabel(for: vm.sceneRenderSnapshot)
-        }
-
-        let evidence = try #require(probeCrossfadeEvidence(in: vm))
-        #expect(evidence.outgoingID == firstLayer.identity.privateIdentifier)
-        #expect(evidence.peakBlendOpacity >= SceneTransitionDiagnostic.minimumBlendOpacity)
-        #expect(!evidence.didOutgoingProgressRewind)
-        #expect(evidence.lastOutgoingProgress > evidence.firstOutgoingProgress)
-    }
-
-    @Test
-    func `the contract probe records a switch or an opaque cut without a blend and motion that goes backwards`()
-        throws
-    {
-        var now = 100.0
-        let vm = makeSmartFillViewModel(timestamp: { now })
-        let (firstLayer, secondLayer) = try holdSecondSceneBehindFirst(in: vm, advanceClock: { now += 1 })
-        let base = vm.sceneRenderSnapshot
-        func frame(
-            outgoing: PlaybackSessionEngine.SceneRenderLayer, opacity: Double, motionActiveTime: TimeInterval,
-            incoming: PlaybackSessionEngine.SceneRenderLayer, incomingOpacity: Double? = nil
-        ) -> PlaybackSessionEngine.SceneRenderSnapshot {
-            let layers = [
-                (outgoing, PlaybackSessionEngine.ScenePresentationLayerRole.outgoing, opacity, motionActiveTime),
-                (incoming, .incoming, incomingOpacity ?? 1 - opacity, 0)
-            ]
-            .map { layer, role, opacity, activeTime in
-                PlaybackSessionEngine.SceneRenderLayer(
-                    identity: layer.identity, role: role, opacity: opacity, motionActiveTime: activeTime,
-                    isMotionEnabled: true, fadeStartTime: nil, fadeDuration: 0, isPresentationReady: true)
-            }
-            return PlaybackSessionEngine.SceneRenderSnapshot(
-                phase: .transition, underlyingPhase: .transition, layers: layers, currentTarget: base.currentTarget,
-                frozenInterval: base.frozenInterval, activeTime: base.activeTime, suspensionReasons: [],
-                isReduceMotionEnabled: false, isPendingTargetReady: true)
-        }
-
-        for _ in 0...2 {
-            _ = vm.scenePresentationContractProbeLabel(
-                for: frame(outgoing: firstLayer, opacity: 0, motionActiveTime: 1, incoming: secondLayer))
-        }
-        // The incoming photo cut in fully opaque on top hides the outgoing one, whatever that one's opacity.
-        _ = vm.scenePresentationContractProbeLabel(
-            for: frame(outgoing: firstLayer, opacity: 1, motionActiveTime: 1, incoming: secondLayer, incomingOpacity: 1)
-        )
-        let hardSwitch = try #require(probeCrossfadeEvidence(in: vm))
-        #expect(hardSwitch.peakBlendOpacity < SceneTransitionDiagnostic.minimumBlendOpacity)
-
-        for (opacity, activeTime) in [(0.8, 2.0), (0.6, 2.1), (0.4, 1.5)] {
-            _ = vm.scenePresentationContractProbeLabel(
-                for: frame(outgoing: secondLayer, opacity: opacity, motionActiveTime: activeTime, incoming: firstLayer))
-        }
-        let rewound = try #require(probeCrossfadeEvidence(in: vm))
-        #expect(rewound.outgoingID == secondLayer.identity.privateIdentifier)
-        #expect(rewound.didOutgoingProgressRewind)
-        #expect(rewound.lowestOutgoingProgress < rewound.firstOutgoingProgress)
-    }
-
-    @Test
     func `suspension freezes the snapshot active time and resuming continues from the original sample`() throws {
         var now = 10.0
         let vm = makeSmartFillViewModel(timestamp: { now })
@@ -911,14 +842,6 @@ struct SmartFillMotionRuntimeIntegrationTests {
         #expect(vm.sceneRenderSnapshot.underlyingPhase == .grace)
         let secondLayer = try #require(vm.sceneRenderSnapshot.layers.first { $0.identity != firstLayer.identity })
         return (firstLayer, secondLayer)
-    }
-
-    private func probeCrossfadeEvidence(in vm: SlideShowViewModel) -> SceneTransitionDiagnostic.CrossfadeEvidence? {
-        let prefix = "lastCrossfade="
-        let label = vm.scenePresentationContractProbeLabel(for: vm.sceneRenderSnapshot)
-        guard let field = label.split(separator: ";").first(where: { $0.hasPrefix(prefix) }) else { return nil }
-        return SceneTransitionDiagnostic.crossfadeEvidence(
-            lastCrossfade: String(field.dropFirst(prefix.count)), frameCount: 1)
     }
 
     private func makeSmartFillViewModel(

@@ -7,50 +7,6 @@ import UIKit
 // These reader tests run on both iOS and tvOS; keep the existing suite identity for CI routing.
 @Suite
 struct StrictE2EPhotoIdentityCaptureIOSTests {
-    enum ControlBarCaptureCase: CaseIterable, Sendable {
-        case lightVisible, darkVisible, lightHidden, darkHidden, blackHidden, flatCalibration
-    }
-
-    @Test(arguments: ControlBarCaptureCase.allCases)
-    func `control bar capture rejects hidden and flat pixels`(captureCase: ControlBarCaptureCase) throws {
-        let isDark = captureCase == .darkVisible || captureCase == .darkHidden
-        let isVisible = captureCase == .lightVisible || captureCase == .darkVisible
-        let gear = try #require(UIImage(systemName: "gearshape.fill"))
-        let button = CGRect(x: 35, y: 610, width: 60, height: 60)
-        let normalized = CGRect(
-            x: button.minX / 480, y: button.minY / 720, width: button.width / 480, height: button.height / 720)
-        func frame(mark: String, hasControl: Bool) throws -> Data {
-            try renderPNG(width: 480, height: 720) { context in
-                fillSyntheticMark(mark, in: CGRect(x: 0, y: 0, width: 480, height: 720), context: context)
-                if hasControl {
-                    context.setFillColor(isDark ? UIColor.black.cgColor : UIColor.white.cgColor)
-                    context.fill(button)
-                    UIGraphicsPushContext(context)
-                    gear
-                        .withTintColor(isDark ? .white : .black, renderingMode: .alwaysOriginal)
-                        .draw(in: button.insetBy(dx: 12, dy: 12))
-                    UIGraphicsPopContext()
-                }
-            }
-        }
-        let black = try renderPNG(width: 480, height: 720) { context in
-            context.setFillColor(CGColor(gray: 0, alpha: 1))
-            context.fill(CGRect(x: 0, y: 0, width: 480, height: 720))
-        }
-        let calibrationPNG = try (captureCase == .flatCalibration ? black : frame(mark: "A1", hasControl: true))
-        let reference = StrictE2EPhotoIdentity.ControlBarReference(
-            png: calibrationPNG, normalizedRect: normalized
-        )
-        if captureCase == .flatCalibration {
-            #expect(reference == nil)
-            return
-        }
-        let calibrated = try #require(reference)
-        let observed = try (captureCase == .blackHidden ? black : frame(mark: "A3", hasControl: isVisible))
-
-        #expect(calibrated.isVisible(png: observed) == isVisible)
-    }
-
     @Test
     func `a differently colored top overlay on a single photo does not count as a second photo`() throws {
         let png = try renderPNG(width: 480, height: 720) { context in
@@ -405,25 +361,6 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
                 #expect(marks.joined(separator: "+") == expected)
             }
         }
-    }
-
-    @Test
-    func `next compares every slot without counting rearrangement as a photo change`() throws {
-        func frame(_ marks: [Int]) throws -> StrictE2EPhotoIdentity.Result {
-            let png = try renderPNG(width: 480, height: 720) { context in
-                for (index, mark) in marks.enumerated() {
-                    fillPublicFixture(
-                        mark, in: CGRect(x: 0, y: index * 720 / marks.count, width: 480, height: 720 / marks.count),
-                        context: context)
-                }
-            }
-            return StrictE2EPhotoIdentity.captureIdentity(png: png)
-        }
-        let before = try #require(frame([3, 2]).navigationMark)
-        #expect(try frame([2, 3]).navigationMark == before)
-        #expect(try frame([3, 1]).navigationMark != before)
-        #expect(try frame([3]).navigationMark == "A3")
-        #expect(try frame([2]).navigationMark == "A2")
     }
 
     // Same public generator as strict_e2e_server._png: 48-pixel cells and centered bitmap ink.

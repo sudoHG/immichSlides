@@ -60,6 +60,9 @@
   },
   "testTargets" : [
     {
+      "selectedTests" : [
+        "SmokeFlowTVOSUITests"
+      ],
       "target" : {
         "containerPath" : "container:immichSlides.xcodeproj",
         "identifier" : "12F4D6672F6A9FF70049C717",

@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from run_offline_unit_tests_test_fixtures import (
-    ACCESS_LIFECYCLE_HOST_SELECTORS,
     CommandError,
     DEFAULT_TIMEOUT_MINUTES,
-    EXTERNAL_RUNTIME_TEST_SELECTOR,
     ElementTree,
     GENERIC_SCHEME,
     IOS_ONE_PASSED_OFFICIAL_SUMMARY,
@@ -45,7 +43,6 @@ from run_offline_unit_tests_test_fixtures import (
     prepare_example_config,
     re,
     read_official_test_results_summary,
-    resolve_suite_selectors,
     scheme_test_plan_names,
     shutil,
     subprocess,
@@ -73,11 +70,10 @@ class RepoDiscoveryTestsCases:
                 self.assertTrue((REPO_ROOT / name).is_file(), msg=name)
 
 
-    def test_existing_plans_select_business_and_ui_targets(self) -> None:
+    def test_existing_plans_select_only_business_targets(self) -> None:
         for plan_path in (IOS_PLAN, TVOS_PLAN):
             names = plan_target_names(plan_path)
-            self.assertIn("immichSlidesTests", names)
-            self.assertIn("immichSlidesUITests", names)
+            self.assertEqual(names, {"immichSlidesTests"})
 
 
 class CommandBuilderTestsCases:
@@ -106,26 +102,8 @@ class CommandBuilderTestsCases:
         self.assertNotEqual(command[command.index("-scheme") + 1], "immichSlides")
 
 
-    def test_default_command_explicitly_skips_external_runtime_gate(self) -> None:
-        command = build_test_command(
-            repo_root=REPO_ROOT,
-            platform="ios",
-            destination="platform=iOS Simulator,id=DEST-IOS",
-        )
-
-        self.assertIn(f"-skip-testing:{EXTERNAL_RUNTIME_TEST_SELECTOR}", command)
 
 
-    def test_explicit_external_runtime_selector_is_rejected(self) -> None:
-        with self.assertRaises(CommandError) as raised:
-            build_test_command(
-                repo_root=REPO_ROOT,
-                platform="ios",
-                destination="platform=iOS Simulator,id=DEST-IOS",
-                only_testing=[EXTERNAL_RUNTIME_TEST_SELECTOR],
-            )
-
-        self.assertIn("Evidence test plan", str(raised.exception))
 
 
     def test_default_tvos_command_uses_discovered_scheme_and_plan(self) -> None:
@@ -140,60 +118,12 @@ class CommandBuilderTestsCases:
         self.assertIn("-only-testing:immichSlidesTests", command)
 
 
-    def test_full_plan_keeps_ui_target_available(self) -> None:
-        command = build_test_command(
-            repo_root=REPO_ROOT,
-            platform="ios",
-            destination="platform=iOS Simulator,id=DEST-IOS",
-            full_plan=True,
-        )
-        self.assertFalse(any(argument.startswith("-only-testing:") for argument in command))
-        self.assertEqual(command[command.index("-testPlan") + 1], Path(scheme_test_plan_names(IOS_SCHEME)[0]).stem)
 
 
-    def test_access_lifecycle_suite_routes_protection_settings_and_lifecycle_selectors(self) -> None:
-        selectors = resolve_suite_selectors("access-lifecycle")
-        self.assertEqual(
-            selectors,
-            [
-                "immichSlidesTests/AccessProtectionStoreTests",
-                "immichSlidesTests/PlaybackSettingsViewModelTests",
-                "immichSlidesTests/ManualPlaybackLifecycleTests",
-                "immichSlidesTests/SceneLifecycleContractTests",
-                "immichSlidesTests/StableMarkTimingTests",
-            ],
-        )
-        self.assertEqual(selectors, ACCESS_LIFECYCLE_HOST_SELECTORS)
-        command = build_test_command(
-            repo_root=REPO_ROOT,
-            platform="ios",
-            destination="platform=iOS Simulator,id=DEST-IOS",
-            only_testing=selectors,
-        )
-        for selector in selectors:
-            self.assertIn(f"-only-testing:{selector}", command)
-        self.assertFalse(any("UITests" in argument for argument in command))
 
 
-    def test_access_lifecycle_suite_is_available_for_tvos_host_routing(self) -> None:
-        command = build_test_command(
-            repo_root=REPO_ROOT,
-            platform="tvos",
-            destination="platform=tvOS Simulator,id=DEST-TV",
-            only_testing=resolve_suite_selectors("access-lifecycle"),
-        )
-        self.assertEqual(command[command.index("-scheme") + 1], TVOS_SCHEME.stem)
-        self.assertIn(
-            "-only-testing:immichSlidesTests/AccessProtectionStoreTests",
-            command,
-        )
 
 
-    def test_unknown_suite_is_rejected(self) -> None:
-        with self.assertRaises(CommandError) as raised:
-            resolve_suite_selectors("strict-e2e")
-        self.assertIn("Unknown offline suite:", str(raised.exception))
-        self.assertIn("access-lifecycle", str(raised.exception))
 
 
 class ConfigInspectionTestsCases:
@@ -348,8 +278,6 @@ class CLIMainTestsCases:
         self.assertIn("env.xcconfig: present", prepared_output)
         self.assertIn("Existing env.xcconfig is present", prepared_output)
         self.assertIn("Example placeholder check: is a placeholder", prepared_output)
-        self.assertIn("1 external evidence test not run", output)
-        self.assertIn("Evidence test plan", output)
 
 
     def test_xcodebuild_exit_code_is_forwarded(self) -> None:

@@ -67,40 +67,11 @@ struct FirstFailureTimeline {
 }
 
 enum FirstFailureContext {
-    struct AlbumCaptureGate {
-        enum Phase: String {
-            case unknown, empty, stablePhoto, grace, transition, loading, incomingFromLoading, paused, sourceError
-        }
-
-        let stable: Bool?
-        let paused: Bool?
-        let entryHintHidden: Bool?
-        let advanced: Bool?
-        let layersChanged: Bool?
-        let manifestComplete: Bool?
-        let phase: Phase
-        var diagnostics: [String: Any]? = nil
-
-        var projection: [String: Any] {
-            func observed(_ value: Bool?) -> Any { value.map { $0 as Any } ?? NSNull() }
-            return [
-                "kind": "album-capture", "stable": observed(stable), "paused": observed(paused),
-                "entry_hint_hidden": observed(entryHintHidden), "advanced": observed(advanced),
-                "layers_changed": observed(layersChanged), "manifest_complete": observed(manifestComplete),
-                "phase": phase.rawValue
-            ]
-        }
-    }
-
     static var isEnabled: Bool { ProcessInfo.processInfo.environment["STRICT_E2E_FIRST_FAILURE_ENABLED"] == "1" }
     private static let lock = NSLock()
     private static var timeline = FirstFailureTimeline()
     private static var step = "unknown"
     private static var element = "unknown"
-    private static var gate: AlbumCaptureGate?
-    private static var albumFixture: String?
-    private static var albumMemberLabels: [String: String] = [:]
-    private static var albumPauseUptimes: [String: Double] = [:]
 
     static func reset() {
         guard isEnabled else { return }
@@ -109,75 +80,12 @@ enum FirstFailureContext {
         timeline = FirstFailureTimeline()
         step = "unknown"
         element = "unknown"
-        gate = nil
-        albumFixture = nil
-        albumMemberLabels = [:]
-        albumPauseUptimes = [:]
     }
 
-    /// Only the already-loaded frozen public member manifest can name diagnostic members.
-    static func configureAlbumDiagnostics(manifest: [String: Any]) {
-        guard isEnabled, let fixture = manifest["fixture_set"] as? String, ["a", "b"].contains(fixture) else {
-            return
-        }
-        var labelsByReference: [String: String] = [:]
-        for key in ["target_album", "non_target_album"] {
-            guard let album = manifest[key] as? [String: Any], let ids = album["asset_ids"] as? [String],
-                let labels = album["labels"] as? [String], ids.count == labels.count
-            else { continue }
-            for (identifier, label) in zip(ids, labels) {
-                guard
-                    (1...(fixture == "a" ? 5 : 8)).contains(where: {
-                        identifier == "asset-\(fixture)-\($0)" && label == "A\($0)"
-                    })
-                else { continue }
-                let hash = identifier.utf8.reduce(UInt64(14_695_981_039_346_656_037)) {
-                    ($0 ^ UInt64($1)) &* 1_099_511_628_211
-                }
-                labelsByReference[String(format: "asset-%016llx", hash)] = label
-            }
-        }
-        lock.lock()
-        albumFixture = fixture
-        albumMemberLabels = labelsByReference
-        lock.unlock()
-    }
-
-    static func recordAlbumPause(requestedUptime: Double?, returnedUptime: Double?, observedUptime: Double?) {
-        guard isEnabled else { return }
-        lock.lock()
-        albumPauseUptimes = [:]
-        albumPauseUptimes["requested_seconds"] = requestedUptime
-        albumPauseUptimes["returned_seconds"] = returnedUptime
-        albumPauseUptimes["observed_seconds"] = observedUptime
-        lock.unlock()
-    }
-
-    static func albumDiagnosticInputs() -> (fixture: String, labels: [String: String], pause: [String: Double])? {
+    static func snapshot() -> (timeline: FirstFailureTimeline, step: String, element: String) {
         lock.lock()
         defer { lock.unlock() }
-        guard let albumFixture else { return nil }
-        return (albumFixture, albumMemberLabels, albumPauseUptimes)
-    }
-
-    static func snapshot() -> (timeline: FirstFailureTimeline, step: String, element: String, gate: AlbumCaptureGate?) {
-        lock.lock()
-        defer { lock.unlock() }
-        return (timeline, step, element, gate)
-    }
-
-    /// Attach timeout facts; per-test reset protects against XCTest aborts that skip the defer.
-    static func withAlbumCaptureGate(_ gate: AlbumCaptureGate, _ failure: () -> Void) {
-        guard isEnabled else { failure(); return }
-        lock.lock()
-        self.gate = gate
-        lock.unlock()
-        defer {
-            lock.lock()
-            self.gate = nil
-            lock.unlock()
-        }
-        failure()
+        return (timeline, step, element)
     }
 
     static func mark(_ step: String, element: String = "unknown") {
