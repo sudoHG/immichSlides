@@ -162,5 +162,3 @@ class RepositoryPrivacyContractTestsCases:
         self.assertNotIn("name: privacy-preflight-trusted", workflow)
         self.assertEqual(workflow.count("uses: actions/checkout@"), 1)
         self.assertIn(f"uses: actions/checkout@{PINNED_CHECKOUT}", workflow)
-
-
