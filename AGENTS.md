@@ -16,7 +16,7 @@ Never do these without explicit approval from the maintainer, whatever the task 
 - Commit secrets, local config (`Config/env.xcconfig`), build output, `.xcresult` bundles, screenshots or scratch scripts.
 - Overwrite, reformat, restore or delete changes you did not make. Report them instead.
 
-Agents never approve CI runs, fork commits, CI-changing commits or releases, even when asked; they may only request approval.
+Agents never approve workflow runs, fork commits or releases, even when asked; they may only request approval.
 
 ## Language
 
@@ -71,7 +71,7 @@ Script entry points ignore local configuration by default and test a recorded wo
 Every `check_all.sh` Python step uses `"${PYTHON:-python3}"`. Prerequisites and interpreter setup are described in [CONTRIBUTING.md](CONTRIBUTING.md#setup).
 
 ```bash
-# All host checks: formatting, test conventions, release guards, localization, prerequisites, workflow policy, known-flaky registry, Python tests (two parallel shards by default; --python-shards 1 for one process)
+# All host checks: formatting, test conventions, release guards, localization, prerequisites, workflow policy, Python tests (two parallel shards by default; --python-shards 1 for one process)
 scripts/check_all.sh
 
 # Offline unit tests (pick a local simulator UDID with `xcrun simctl list devices available`)
@@ -88,7 +88,9 @@ scripts/install_git_privacy_hooks.sh
 
 `check_all.sh` delegates its host checks to `scripts/run_host_checks.py`, including the Python suite and per-test observations. The shared commands and versioned records are described in [docs/CI_SUMMARY.md](docs/CI_SUMMARY.md).
 
-Schemes: `immichSlides` is for build, run and archive only. Run tests through `immichSlides-iOS` / `immichSlides-tvOS`. End-to-end runners and their suites are described in [docs/TESTING.md](docs/TESTING.md#running-controlled-integration-and-end-to-end-tests).
+Schemes: `immichSlides` is for build, run and archive only. Run tests through `immichSlides-iOS` / `immichSlides-tvOS`.
+
+CI: a pull request runs host checks, both builds and offline unit tests (`ci-gate`), plus the two privacy checks. The builds compile the UI test target but run no UI tests. The smoke flows are the only UI tests: they run nightly when `main` changed, report results and never block merges. See [docs/CI_NIGHTLY.md](docs/CI_NIGHTLY.md) for scheduling, [docs/CI_STRICT_RUNNER.md](docs/CI_STRICT_RUNNER.md) for the runner, and [docs/TESTING.md](docs/TESTING.md#app-store-screenshots) for the App Store screenshot tests.
 
 ## Swift and SwiftUI conventions
 
