@@ -4,7 +4,8 @@ These rules apply to new or changed tests. Do not rewrite unrelated tests.
 [CONTRIBUTING](../CONTRIBUTING.md#setup) owns setup and local snapshot commands.
 
 PR CI runs host checks, build and offline units through `ci-gate`, plus the two
-privacy checks. It no longer compiles or executes the UI test target.
+privacy checks. Its `build-for-testing` compiles every scheme testable, including
+the UI target's smoke and App Store screenshot methods, but runs no UI tests.
 The [sole nightly](CI_NIGHTLY.md) compiles/runs smoke: seven core flows when
 main changes, all 23 on manual dispatch before release. Smoke results are
 reported and never block merges. There is no CI approval step.

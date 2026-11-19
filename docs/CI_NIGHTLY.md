@@ -44,8 +44,9 @@ seven core IDs. No historical planning inventory selects tests.
 Only nonempty device/configuration groups start jobs. iOS builds one generic
 simulator archive per selected Debug/Release configuration and shares it between
 iPhone and iPad groups; Apple TV groups build locally. The nightly compiles and
-runs the UI test target. PR CI does neither. App Store screenshots are manual
-Evidence-plan tooling, not smoke.
+runs smoke in the UI test target. PR CI compiles all scheme testables, including
+that target's smoke and App Store screenshot methods, but runs no UI tests.
+App Store screenshots are manual Evidence-plan tooling, not smoke.
 
 Each selected flow records its first result without test retries or yellow
 outcomes. Failed or missing results, invalid source/export evidence and failed

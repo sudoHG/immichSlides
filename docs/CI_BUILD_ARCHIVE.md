@@ -2,8 +2,9 @@
 
 `ci-gate` builds the unit-only default plans once per applicable tested commit,
 platform and producer attempt. [Unit consumers](CI_UNIT_TESTS.md) reuse them
-without source. PR CI no longer compiles the UI target;
-[smoke nightly](CI_NIGHTLY.md) builds it separately.
+without source. `build-for-testing` compiles every scheme testable, including
+the UI target's smoke and App Store screenshot methods. PR CI runs no UI tests;
+[smoke nightly](CI_NIGHTLY.md) builds and executes smoke separately.
 
 ## Unit archives
 
@@ -25,7 +26,7 @@ stays Sign to Run Locally. Product server fields must be empty and debug flags
 disabled. Signature inspection must measure `Signature=adhoc`.
 
 `archive/build.tar.gz` preserves complete `Build/Products`: xctestrun, App,
-unit bundle, frameworks and packaged public fixtures. Source, DerivedData,
+unit/UI bundles, frameworks and packaged public fixtures. Source, DerivedData,
 package checkouts and raw results are excluded.
 The schema-1 manifest binds source/event, run/workflow/attempt, platform/configuration,
 toolchain/pins, architectures, signing, paths, archive hash and full inventory.

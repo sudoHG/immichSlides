@@ -6,8 +6,9 @@ Apple TV when App builds apply. Each consumer depends only on its platform's
 stages tooling/declarations and removes its checkout before enumeration/execution.
 No project, package checkout or rebuild remains.
 
-Default plans are unit-only. PR CI does not compile or run the UI test target;
-the smoke nightly does. Manual screenshots use the
+Default plans are unit-only, but `build-for-testing` compiles every scheme
+testable, including the UI target's smoke and App Store screenshot methods.
+PR CI runs no UI tests; the smoke nightly executes smoke. Manual screenshots use the
 [Evidence plans](TESTING.md#app-store-screenshots).
 
 ## Limits and coverage

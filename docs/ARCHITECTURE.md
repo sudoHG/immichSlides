@@ -30,7 +30,7 @@ The root flow is `ContentView` with `AppFlowStateMachine` and `AppRoute` (`first
 | `Config/` | `env.example.xcconfig` and `Debug.xcconfig`. The optional, git-ignored `env.xcconfig` is included by `Debug.xcconfig`, which is referenced only by Debug configurations. |
 | `immichSlides/Localizable.xcstrings` | Every user-visible string. |
 | `immichSlidesTests/` | Unit tests (Swift Testing). Files with `Live` in the name (for example `PlaybackPoolResolverLiveIntegrationTests`) need a real server and skip without one. |
-| `immichSlidesUITests/` | Smoke flows (XCTest) plus manual App Store screenshot tooling. PR CI does not compile this target; the smoke nightly does. |
+| `immichSlidesUITests/` | Smoke flows (XCTest) plus manual App Store screenshot tooling. PR CI compiles this scheme testable but runs no UI tests; the nightly runs smoke. |
 | `TestSupport/` | Shared unit/UI helpers, public fixture inputs, waits and first-failure capture. Never used by production code. |
 | `scripts/` | Test runners, lint and release checks, localization tools, privacy gate. Most scripts have a matching `test_*.py`. |
 

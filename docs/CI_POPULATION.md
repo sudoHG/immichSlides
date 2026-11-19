@@ -158,7 +158,8 @@ The base-owned classifier also checks static build membership and both diff
 sides; unknown paths and CI-trusted inputs remain App-affecting.
 Host checks always run. On App-unaffected PRs only, both platform build/unit
 paths can be not applicable. Main pushes run both platforms.
-No classification selects PR UI tests; PR CI does not compile that target.
+No classification selects PR UI execution. PR builds compile every scheme
+testable, including the UI target; unit jobs execute only the unit target.
 
 Exact policy paths must exist. Workflow/host entry points and their import/test
 closure, schemes/plans, pins and scanner policies remain CI-trusted.

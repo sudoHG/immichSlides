@@ -103,8 +103,9 @@ mark both platform build/unit paths not applicable for App-unaffected PRs;
 unknown or CI-trusted changes run them. Main pushes run both platforms.
 Builds produce [secret-free archives](docs/CI_BUILD_ARCHIVE.md), then
 [source-free unit consumers](docs/CI_UNIT_TESTS.md) enumerate and execute them.
-**PR CI no longer compiles the UI test target.**
-The [sole smoke nightly](docs/CI_NIGHTLY.md) compiles and runs it when main changes:
+PR CI's `build-for-testing` compiles every scheme testable, including the UI
+target's smoke and App Store screenshot methods, but runs no UI tests.
+The [sole smoke nightly](docs/CI_NIGHTLY.md) compiles and runs smoke when main changes:
 seven core flows on the daily schedule, all 23 on manual dispatch before release.
 Smoke results are reported and never block merges.
 
