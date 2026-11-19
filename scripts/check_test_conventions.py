@@ -22,37 +22,8 @@ from pathlib import Path
 TARGET_GLOBS = ("immichSlidesTests/*.swift", "immichSlidesUITests/*.swift", "TestSupport/*.swift")
 ALLOWLIST_PATH = "scripts/test_conventions_allowlist.json"
 TIMEOUT_ALLOWLIST_PATH = "scripts/test_timeout_allowlist.json"
-# Approved source identities are independent of the editable plan's links.
-APPROVED_TIER_SMOKE = {
-    "iphone-album-selection": ("iphone", "Debug", "strict", "filter-album|normal|iphone|Debug|a"),
-    "iphone-background-return": ("iphone", "Release", "strict", "ios-lifecycle-background|normal|iphone|Release|a"),
-    "iphone-connection-error": ("iphone", "Debug", "strict", "firstboot-failure|auth-401|iphone|Debug|a"),
-    "iphone-first-boot": ("iphone", "Debug", "strict", "journey-a|normal|iphone|Debug|a"),
-    "iphone-person-return": ("iphone", "Debug", "strict", "filter-person-return|normal|iphone|Debug|a"),
-    "iphone-pin-gate": ("iphone", "Debug", "ui", "immichSlidesUITests/testPinProtectionBlocksBackAndRequiresPINForSettings"),
-    "iphone-playback-controls": ("iphone", "Debug", "strict", "journey-b|normal|iphone|Debug|a"),
-    "iphone-settings-relaunch": ("iphone", "Release", "strict", "ios-lifecycle-settings|normal|iphone|Release|a"),
-    "ipad-background-return": ("ipad", "Release", "strict", "ios-lifecycle-background|normal|ipad|Release|a"),
-    "ipad-first-boot": ("ipad", "Debug", "strict", "journey-a|normal|ipad|Debug|a"),
-    "ipad-playback-controls": ("ipad", "Debug", "strict", "journey-b|normal|ipad|Debug|a"),
-    "ipad-rotation": ("ipad", "Debug", "strict", "p2-rotation|normal|ipad|Debug|a"),
-    "ipad-settings-sidebar": ("ipad", "Debug", "ui", "FilterSummaryIOSVisualUITests/testIOSSettingsOpenSourceLicensesKeepsPadSidebarResponsive"),
-    "tv-album-selection": ("tv", "Debug", "strict", "tvos-album|normal|tv|Debug|a"),
-    "tv-background-return": ("tv", "Release", "strict", "tvos-lifecycle-background|normal|tv|Release|a"),
-    "tv-directional-wake": ("tv", "Debug", "strict", "tvos-directional-wake|normal|tv|Debug|a"),
-    "tv-first-boot": ("tv", "Debug", "strict", "tvos-n1-cold|normal|tv|Debug|a"),
-    "tv-pause-resume": ("tv", "Release", "strict", "tvos-lifecycle-pause|normal|tv|Release|a"),
-    "tv-person-selection": ("tv", "Debug", "strict", "tvos-person|normal|tv|Debug|a"),
-    "tv-pin-gate": ("tv", "Debug", "ui", "FilterSummaryTVOSVisualUITests/testTVOSFullFlowPinGateBlocksSettingsUntilPinValidated"),
-    "tv-playback-controls": ("tv", "Debug", "strict", "tvos-flow|normal|tv|Debug|a"),
-    "tv-server-switch": ("tv", "Release", "strict", "tvos-switch|normal|tv|Release|a"),
-    "tv-settings-relaunch": ("tv", "Release", "strict", "tvos-lifecycle-settings|normal|tv|Release|a"),
-}
-
-# Swift Testing functions that intentionally keep a plain (non-raw-identifier) name. Selected by the
-# scripts that migrated the rest of the suite to sentence-style raw identifiers; see docs/TESTING.md #2.
+# Swift Testing function that retains its plain identifier; see docs/TESTING.md #2.
 SWIFT_TESTING_NAME_EXCEPTIONS = frozenset({
-    "externalRuntimeJSONLPassesValidator",
     "normalizeServerURLWorks",
 })
 

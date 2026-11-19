@@ -1,177 +1,64 @@
 # Test waits and product timing
 
-`TestSupport/TestWait.swift` belongs to the unit and UI test targets on iOS and
-tvOS. The app target does not include `TestSupport`. Production code must never
-read `IMMICHSLIDES_TEST_WAIT_FACTOR` or use `TestWait`; the conventions check
-rejects either access, without an allowlist exception.
+`TestSupport/TestWait.swift` belongs to unit/UI test targets on both platforms.
+It is absent from the App target. Production code must not use TestWait or read
+`IMMICHSLIDES_TEST_WAIT_FACTOR`; the conventions checker enforces this.
 
-Choose a budget at the call site:
+## Budgets
 
 ```swift
 element.waitForExistence(timeout: TestWait.seconds(.infrastructure(5)))
-TestWait.until(.infrastructure(10)) { fixtureIsReady }
 TestWait.until(.product(3)) { pauseHasTakenEffect }
 TestWait.observe(seconds: 3) { renderedFrameIsFrozen }
 ```
 
-Infrastructure waits cover availability of test machinery: launch, element
-discovery, fixture readiness and network setup. `seconds` resolves the budget
-once; pass that result to a legacy helper without scaling it again. `until`
-polls to a monotonic deadline. Poll cadence stays fixed and its last delay is
-clamped to the remaining budget. The clock is checked before polling and after
-each predicate evaluation; a predicate returning success after expiry is rejected.
+Infrastructure covers fixture/machinery availability. Resolve a budget once;
+do not scale resolved seconds again. The environment factor defaults to 1.
+The remaining smoke runner exposes no wait-factor CLI.
 
-Product deadlines measure the app's promise to the user. Observation windows
-measure an invariant throughout a fixed span. Neither scales. `observe` fails
-on the first violated sample and succeeds only after the whole product window.
-Do not classify a product deadline as infrastructure to cure a failure. Existing
-elapsed-time bounds and assertions remain in force.
+Product deadlines measure an App response; observation windows require an
+invariant across a complete span. Neither scales. `until` checks a monotonic
+deadline before and after each predicate, rejecting late success.
+`observe` fails at the first violated sample and completes the whole window.
+Keep polling cadence fixed and clamp the last delay to remaining time.
+Never relabel product timing to cure a failure.
 
-Legacy helpers can continue to accept resolved seconds. Classify at their callers
-or timing declarations and pass the result through unchanged; wrapping an already
-resolved infrastructure value in another infrastructure budget would scale it twice.
-Scene-presentation sampling spans, screenshot stability spans and first-visible-tick
-offsets remain fixed product timing even when they help collect diagnostic evidence.
+## Navigation hang guards
 
-Access-lifecycle timing starts at the original user action. Pause holds, background
-holds, first-wake evidence, PIN-gate responses and the resume interval's tolerance
-remain product timing. A screenshot capture can have its own fixed evidence budget
-without extending the first-transition deadline; preserve both bounds separately.
-Settings and Continue responses, settings-route probes, Back/Playback responses
-and optional-hint observations keep their original fixed windows; they determine
-the next UI action rather than await fixture availability.
-Shared constants used for both machinery readiness and user-visible responses
-stay product. Give genuine first-launch, fixture and connection readiness an
-independent infrastructure budget at the call site. The first assertion after a
-tap or key press, route probes, absence observations and sampling cadence stay
-product; discovering a control before the timed action can be infrastructure.
-
-### Approved post-tap focus readback exception
-
-Hogan approved decision D1 for PR #690 on 2026-11-06: iOS credential focus
-readiness after the sole tap uses HangGuard readback semantics instead of the
-ordinary post-predicate product deadline rule above. After the tap returns,
-`IOSFirstBootNavigation.focusTextField` starts the existing unscaled 5-second
-element-appearance budget independently of field discovery. A focused, enabled
-field returned by a query admitted before expiry is ready even if that native
-query returns after expiry. No query is admitted at or after the deadline.
-The readback transaction issues no action, so it cannot claim HangGuard's extra
-post-action observation. No focus means a fixed red assertion and no typing.
-The worst case remains 5 seconds plus one in-flight native query, without a new
-window, another tap, a software-keyboard requirement or a v5 failure exception.
-The conventions check admits this explicit duration only in that helper and only
-with the existing element-appearance constant. Apart from this and the approved
-smoke-flow exception below, UI navigation keeps the default HangGuard duration.
+`TestWait.hangGuard()` has one unscaled 60-second monotonic deadline shared by
+preparation, action and readback. Each transaction admits one action.
+No new query/action starts after expiry. A satisfied query admitted before
+expiry may return late. A returned action gets one final observation, including
+after expiry; a failed/unsatisfied read cannot pass.
+Use a one-shot `probe` for optional branches, never a polling wait.
+Do not create guards in polling loops or refresh their deadlines.
 
 ### Approved smoke-flow guard exception
 
-Hogan approved the smoke-only guard increase on 2026-11-15. The conventions check
-allows only the literal `timeoutSeconds: 120` in `iosSmokeFlow` in
-`immichSlidesUITests/SmokeFlowIOSUITests.swift` and `tvSmokeRunFlow` in
-`immichSlidesUITests/SmokeFlowTVOSUITests+Support.swift`.
-The matching `scripts/test_timeout_allowlist.json` entries are:
+The smoke-only guard is 120 seconds in exactly `SmokeFlowIOSUITests.iosSmokeFlow`
+and `SmokeFlowTVOSUITests.tvSmokeRunFlow`. The timeout allowlist records one
+literal at each site; the shared default and first-boot helpers are unchanged.
+The outer method/startup cap is documented in [Smoke runner](CI_STRICT_RUNNER.md#budgets-and-first-results).
 
-| File | Qualified function | Normalized expression | Count |
-| --- | --- | --- | ---: |
-| `immichSlidesUITests/SmokeFlowIOSUITests.swift` | `SmokeFlowIOSUITests.iosSmokeFlow` | `letguardWait=TestWait.hangGuard(timeoutSeconds:120)` | 1 |
-| `immichSlidesUITests/SmokeFlowTVOSUITests+Support.swift` | `SmokeFlowTVOSUITests.tvSmokeRunFlow` | `letguardWait=TestWait.hangGuard(timeoutSeconds:120)` | 1 |
+### Approved post-tap focus readback exception
 
-Other values, functions, files and additional occurrences are not approved.
-The shared `TestWait.hangGuard` default stays 60 seconds; helper guards are unchanged.
-See the [smoke runner guide](CI_STRICT_RUNNER.md#short-smoke-flow-suite) for the
-approval evidence and matching outer limits.
+`IOSFirstBootNavigation.focusTextField` taps once, then starts the existing
+unscaled five-second focus-readback window. It queries the identifier-matched
+focused/enabled field without requiring a software keyboard. A satisfied query
+admitted before expiry may return late; no query starts at/after expiry.
+This readback issues no action and gains no extra post-action observation.
+Failure prevents typing; no retap or longer window is permitted.
 
-## Runner factor and recording
+## Timeout literal ratchet
 
-The factor defaults to `1` locally. Runners accept `--wait-factor`, require a
-finite number in `[1, 4]`, and reject invalid inputs rather than clamping them.
-The current `ci-ui` workflow explicitly passes `2`. Xcode invocation, job and
-result-export budgets remain independent and do not multiply by this factor.
-
-The fixture runner removes ambient and prefixed factor inputs and injects the
-validated value only into the UI test target's `EnvironmentVariables` in a
-private `.xctestrun` copy. It does not inject it into the app or unit target.
-The original archived launch inputs remain unchanged.
-`wait-configuration.json` records the factor, bounds, source and fixed product
-factor; `summary.json` records it in `toolchain.versions.test_wait_factor`.
-These scanned records are published with the shard's other records. `TestWait`
-also prints its effective factor on first infrastructure use in the test log.
-
-Run a bounded fixture selection with a secret-free build and dedicated simulator:
-
-```bash
-python3 -B scripts/run_fixture_ui_tests.py --device iphone \
-  --destination 'platform=iOS Simulator,id=<dedicated-UDID>' \
-  --xctestrun '<secret-free-Products>/immichSlides.xctestrun' \
-  --only-testing immichSlidesUITests/immichSlidesUITests/testFirstBootValidationAndDisabledSaveButton \
-  --wait-factor 2 --output-dir '<fresh-outside-repo>'
-```
-
-`ci_ui_tests.py run` and `reproduce` also accept `--wait-factor` (default `1`).
-Pass `--wait-factor 2` to reproduce hosted wait budgets. Reproduction still
-checks the selected revision's toolchain and device pins. Historical revisions
-keep their original fixed budgets at factor `1`; a non-default factor is refused
-before building when the selected revision does not advertise that option.
-
-## Raw literal ratchet
-
-Strict/E2E and evidence suites classify initial fixture and recorder availability
-as infrastructure. Later photo changes, settings readbacks, focus recovery,
-keyboard response, pause holds, motion samples and polling intervals remain
-product timing. A collection's first manifest uses its infrastructure deadline,
-while subsequent manifests keep the photo-change
-deadline. Resolving a budget does not alter any elapsed-time assertion or
-sampling interval.
-
-`scripts/check_test_conventions.py` checks all existing test-target Swift file
-globs. `scripts/test_timeout_allowlist.json` records the frozen pre-migration literals
-and the two explicitly approved smoke-flow literals above
-by file, qualified function (or `<scope>` for declarations outside a function),
-normalized expression and occurrence count. No line numbers are stored.
-
-The scanner recognizes timeout/deadline/duration/window/observation/poll/hold
-arguments and defaults, named timing constants ending in hold/delay/interval,
-typed `TimeInterval`/`Duration`/`DispatchTimeInterval` initializers, numeric duration constructors,
-`addingTimeInterval`, `sleep`, `usleep`, `Task.sleep(nanoseconds:)` and
-`Thread.sleep(forTimeInterval:)`. Wrapped and arithmetic
-arguments are included, including continuation lines (a trailing or leading operator, or a leading `.member`). Comments and strings are ignored. This is a lexical
-convention check; it does not infer whether a named variable is a product promise.
-Window arguments ending in `Count`, `Limit`, `Size` or `Used` represent counts
-and are excluded; timing window names should include their time unit.
-Choose the classification explicitly during migration.
-Classified `TestWait.seconds`, `until` and `observe` budget/cadence arguments are
-masked before numeric detection. Arithmetic literals outside those regions and
-raw waits inside predicates still count. The original inventory is from main
-`7516d4e`; migrated sites are removed individually while unmigrated and documented
-non-timeout entries remain. The two approved smoke-flow entries are post-migration
-exceptions, not entries to remove as migration cleanup. The allowlist is a
-[CI-trusted input](CI_POPULATION.md#classification-and-gate-evaluation); every edit
-requires exact-head maintainer approval, including removals during migration.
-
-An additional literal, including a duplicate in an already listed function,
-fails. A changed value, moved function/file, removed literal or decreased count
-leaves a stale entry and fails. Remove only the corresponding entries/counts
-after migration. There is no regeneration flag: regenerating this baseline to
-admit new waits defeats the ratchet. The smoke-flow exception above is explicitly
-approved and recorded without regenerating that baseline. Run:
+`scripts/test_timeout_allowlist.json` records existing literals by file,
+qualified function, normalized expression and count. Extra/changed literals
+fail; removed literals leave stale entries that must be deleted.
+Do not regenerate the baseline or add an exception to conceal a failure.
+The scanner recognizes timing arguments/constants, duration construction,
+sleep APIs and arithmetic; it is lexical, so reviewers still classify meaning.
 
 ```bash
 python3 -B scripts/check_test_conventions.py
 python3 -B -m unittest discover -s scripts -p test_check_test_conventions.py
 ```
-
-## Initial migration boundary
-
-Only these sites introduce the mechanism; area-wide migration is separate:
-
-| Site | Classification | Base duration |
-| --- | --- | --- |
-| `immichSlidesUITests.testFirstBootValidationAndDisabledSaveButton`: URL field discovery | Infrastructure | Existing 5 seconds |
-| `ServerConfigFormTVOSUITests.testTVOSFirstBootCoreElementsAndDisabledSave`: Save discovery | Infrastructure | Existing 5 seconds |
-| `PlaybackHistoryIOSUITests.assertSmartFillPauseOnlyFrameFreeze`: initial paused-frame probe deadline | Product deadline | Existing 3 seconds |
-| Same helper: four pause sample intervals | Product observation | Existing 0.75 seconds each |
-
-The product sites are listed for maintainer review. Their sampling, elapsed
-windows and frame/phase/opacity/progress/pixel assertions are unchanged. These
-changes make no claim to fix the hosted failures tracked separately in the CI
-epic.

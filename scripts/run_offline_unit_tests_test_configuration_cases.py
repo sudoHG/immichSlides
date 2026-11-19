@@ -102,10 +102,6 @@ class CommandBuilderTestsCases:
         self.assertNotEqual(command[command.index("-scheme") + 1], "immichSlides")
 
 
-
-
-
-
     def test_default_tvos_command_uses_discovered_scheme_and_plan(self) -> None:
         plan_name = scheme_test_plan_names(TVOS_SCHEME)[0]
         command = build_test_command(
@@ -116,14 +112,6 @@ class CommandBuilderTestsCases:
         self.assertEqual(command[command.index("-scheme") + 1], TVOS_SCHEME.stem)
         self.assertEqual(command[command.index("-testPlan") + 1], Path(plan_name).stem)
         self.assertIn("-only-testing:immichSlidesTests", command)
-
-
-
-
-
-
-
-
 
 
 class ConfigInspectionTestsCases:

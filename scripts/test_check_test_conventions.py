@@ -236,8 +236,6 @@ class SwiftTestingNameTests(unittest.TestCase):
     def test_exception_list_entry_passes(self):
         source = "@Test\nfunc normalizeServerURLWorks() {}\n"
         self.assertEqual([], conv.check_swift_testing_names(self.path, source))
-        source = "@Test(.enabled(if: externalRuntimeJSONLEnabled))\nfunc externalRuntimeJSONLPassesValidator() throws {}\n"
-        self.assertEqual([], conv.check_swift_testing_names(self.path, source))
 
     def test_raw_identifier_sentence_passes(self):
         source = "@Test\nfunc `empty selection cannot start filtered playback`() {}\n"

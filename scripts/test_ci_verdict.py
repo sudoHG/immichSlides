@@ -264,7 +264,6 @@ class AdmissionVerdictTests(unittest.TestCase):
     def test_classification_covers_kept_workflow_tools_and_their_import_closure(self):
         allowlist = json.loads(Path(__file__).with_name("ci-classification.json").read_text(encoding="utf-8"))
         for paths, members, app, ci in ((["docs/README.md"], set(), False, False),
-                                       (["review-records/sha/p2-cache/iphone/a.json"], set(), False, False),
                                        (["docs/bundled.md"], {"docs/bundled.md"}, True, False),
                                        (["immichSlides/Resources/privacy.html"], set(), True, False),
                                        (["scripts/ci-test-policy.json"], set(), True, True),

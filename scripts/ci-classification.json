@@ -2,7 +2,6 @@
   "schema_version": 1,
   "app_unaffected": [
     "docs/**",
-    "review-records/**",
     "README.md",
     "CONTRIBUTING.md",
     "LICENSE",

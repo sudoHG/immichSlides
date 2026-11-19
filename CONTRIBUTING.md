@@ -10,92 +10,63 @@ Thanks for helping out. immichSlides is a SwiftUI photo slideshow client for [Im
 
 ## Setup
 
-**Local script defaults have changed:** `check_all.sh`, the offline unit runner,
-fixture UI runner, strict/access-lifecycle device runners, build archive producer
-and UI shard entry points now use CI-equivalent local mode. They ignore ambient
-test/server inputs and `Config/env.xcconfig`, including an existing private symlink.
-They test a clean snapshot containing tracked working changes and untracked,
-non-ignored files. A temporary commit object records that tree without moving a
-branch or changing your index; its disposable worktree is removed afterward.
-The terminal prints the tested tree SHA. An output/evidence directory also gets
-`local-snapshot.json`; otherwise use `--snapshot-record '<outside-repo>/tree.json'`.
-Existing runner flags still work; separated and inline output/DerivedData options
-retain their caller-relative meaning. Offline aliases `--derived-data` and
-`--result-bundle` are explicit; implicit option abbreviations are not supported.
-DerivedData stays outside the disposable snapshot: `check_all.sh` uses the original
-checkout's `.derivedData/check-all-{ios,tvos}`, and the standalone offline runner
-defaults to `.derivedData/offline-{ios,tvos}` there. Explicit paths win. These caches
-survive individual runs; keep them task-specific and remove them after verification.
-
-Use `--strict-ci` to refuse a dirty tree, including non-ignored untracked files.
-Use repeatable `--config NAME=VALUE` for explicit runtime test inputs; values are
-never included in the snapshot receipt. `--allow-private-config` explicitly opts
-into the original checkout's private configuration for local testing. That mode
-does not snapshot, can compile private values, and must never produce public
-evidence. Fixture/archive entry points continue to refuse private files even
-with this flag. `--prepare-example-config` remains an explicit setup operation in
-the original checkout; run it alone or with `--check`, separately from a test command. Xcode's own GUI
-and direct `xcodebuild` commands retain their existing configuration behavior.
+Use the exact [CI pins](docs/CI_TOOLCHAIN.md): Xcode and installed iOS/tvOS
+Simulator runtimes, Python with Pillow/PyYAML, Swift and zstd.
+Deployment targets are iOS/tvOS 18.6. Setup installs only a task-owned Python
+environment; it does not download Xcode or simulator resources.
 
 ```bash
-scripts/check_all.sh --strict-ci
-python3 -B scripts/run_offline_unit_tests.py --allow-private-config --check
-python3 -B scripts/ci_ui_tests.py reproduce --shard navigation \
-  --destination 'platform=iOS Simulator,id=<assigned-UDID>' \
-  --output-dir '<fresh-outside-repo>'
+/usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 \
+  --venv /tmp/immichslides-python --verify-toolchain
+source /tmp/immichslides-python/bin/activate
+scripts/check_all.sh
 ```
 
-The last command reproduces the current working tree, starts the public fixture
-server and prints the exact build, shard and Xcode test commands. Pass
-`--manifest-revision COMMIT_SHA` to explicitly reproduce a historical tree.
-See [the UI reproduction guide](docs/CI_UI.md#reproduce-one-shard) for pins,
-skip/deselection accounting and artifact boundaries. Hosted producers retain
-their existing admitted-checkout/identity contracts.
-Local nightly planning, execution and aggregation also share this snapshot contract;
-keep the source tree unchanged between commands, as described in
-[the nightly guide](docs/CI_NIGHTLY.md).
+`check_all.sh` honors `PYTHON`; its child checks keep that interpreter.
+Local script entry points test a clean snapshot of tracked working changes plus
+untracked non-ignored files. They exclude private configuration without following
+its symlinks and strip ambient test/server inputs.
+The tested tree is printed and recorded in `local-snapshot.json` beside output,
+or at `--snapshot-record PATH`. `--strict-ci` refuses dirty input.
+`--config NAME=VALUE` supplies explicit runtime inputs without recording values.
+`--allow-private-config` opts into the original checkout for explicitly authorized
+private testing; those results are never public evidence. Archive/fixture
+preflight still rejects private configuration.
 
-- A Mac with the Xcode version the project was last upgraded with (Xcode 26.3, see `LastUpgradeCheck` in `immichSlides.xcodeproj`), the iOS and tvOS Simulator runtimes, Python 3 with Pillow and PyYAML, Swift (included with Xcode), and the zstd CLI (`brew install zstd`) for Python contract tests.
-- CI tool versions and the isolated Python setup are documented in [CI toolchain and workflow policy](docs/CI_TOOLCHAIN.md). The host entry point runs the standalone workflow-policy check in the same environment as the other Python checks.
-- [Trusted CI publication and approval](docs/CI_PUBLISHER.md) explains the informational App statuses, exact-head fork/CI approval, main-only trusted workflows, and a read-only dry-run. GitHub may separately require approval before a first-time fork contributor's producer run starts.
-- [CI reporting and failure tracking](docs/CI_REPORT.md) describes daily main/nightly history, producer-owned PR summaries, nightly issue recovery, registry upkeep, monthly health and main-push notifications.
-- All `check_all.sh` Python steps use `"${PYTHON:-python3}"`; child host checks keep that interpreter. Set `PYTHON=/usr/bin/python3` to use the recommended Xcode-bundled Python, or activate a venv made from it and leave `PYTHON` unset. Python 3.14 can hit the [fixture startup stall (#122)](https://github.com/sudoHG/immichSlides/issues/122).
+Direct Xcode/GUI commands retain their normal configuration behavior.
+`Config/env.xcconfig` is optional and never needed for offline units.
+`--prepare-example-config` is a separate explicit setup operation; it does not
+overwrite an existing file.
 
-  ```bash
-  /usr/bin/python3 scripts/setup_ci_python.py --python /usr/bin/python3 --venv /tmp/immichslides-python
-  source /tmp/immichslides-python/bin/activate
-  unset PYTHON
-  scripts/check_all.sh
-  # With the prerequisites already installed for Xcode Python, no PATH change is needed:
-  PYTHON=/usr/bin/python3 scripts/check_all.sh
-  ```
-- Deployment target is iOS / tvOS 18.6.
-- `Config/env.xcconfig` is an optional, git-ignored local test configuration. `Config/Debug.xcconfig` includes it only when present, so a fresh clone builds in Xcode without setup.
-- The test runners refuse to start `xcodebuild` below 80 GiB free on `/System/Volumes/Data`; pass `--min-free-gib N` with a non-negative integer to change this local safety threshold.
-- To seed an optional local configuration from the example without overwriting anything:
+Run units with `immichSlides-iOS` / `immichSlides-tvOS`; `immichSlides` is
+build/run/archive only. Choose the actual pinned simulator UDID and fresh paths:
 
-  ```bash
-  python3 scripts/run_offline_unit_tests.py --prepare-example-config
-  ```
+```bash
+df -h /System/Volumes/Data
+xcrun simctl list devices available
+python3 -B scripts/run_offline_unit_tests.py --platform ios \
+  --destination 'platform=iOS Simulator,id=<IPHONE-UDID>' \
+  --derived-data-path .derivedData/local-ios \
+  --result-bundle-path '<fresh-outside-repo>/ios.xcresult'
+df -h /System/Volumes/Data
+python3 -B scripts/run_offline_unit_tests.py --platform tvos \
+  --destination 'platform=tvOS Simulator,id=<TV-4K-UDID>' \
+  --derived-data-path .derivedData/local-tvos \
+  --result-bundle-path '<fresh-outside-repo>/tvos.xcresult'
+```
 
-- **Unit tests need no Immich server and no credentials.** Run them with the schemes `immichSlides-iOS` / `immichSlides-tvOS` (not `immichSlides`, which is for build, run and archive only):
+No server or credentials are needed. The runner checks 80 GiB free before Xcode.
+Exit 124 or zero selected tests is not a pass. Conditional skips are reported
+separately. DerivedData stays outside the disposable snapshot and survives runs;
+keep it task-specific and delete it and private raw bundles after inspection,
+once no process holds them. Cancellation finalizes/reaps owned child groups before
+snapshot removal; uncertain cleanup retains the path for diagnosis.
 
-  ```bash
-  xcrun simctl list devices available   # pick a simulator UDID
-  python3 scripts/run_offline_unit_tests.py --platform ios --destination 'platform=iOS Simulator,id=<UDID>' --derived-data-path .derivedData/local-ios --result-bundle-path '<outside-repo>/ios.xcresult'
-  python3 scripts/run_offline_unit_tests.py --platform tvos --destination 'platform=tvOS Simulator,id=<UDID>' --derived-data-path .derivedData/local-tvos --result-bundle-path '<outside-repo>/tvos.xcresult'
-  ```
-
-  A run that times out (exit 124) or selects zero tests is not a pass.
-- **UI tests** in Xcode or an explicitly opted-in private local run can use the Immich server set in `Config/env.xcconfig`, and skip when none is set. Script defaults ignore that file. They only read from that server; tests that start from the filter summary need its first album to contain photos and at least one person. See [docs/TESTING.md](docs/TESTING.md).
-  For secret-free default-plan runs, use [Fixture-server UI mode](docs/CI_FIXTURE_UI.md).
-  It starts a public loopback server and measures coverage for every selected test.
-- **Strict end-to-end tests** run the real app against a local public fixture server that `scripts/run_strict_e2e.py` starts for you, so they do not touch anyone's Immich server. See [Running controlled integration and end-to-end tests](docs/TESTING.md#running-controlled-integration-and-end-to-end-tests) and `python3 scripts/run_strict_e2e.py --help`.
-  Explicit warm-build reuse and the informational hosted tracer are documented in
-  [Strict runner warm-build tracer](docs/CI_STRICT_RUNNER.md).
-  Versioned matrix reproduction and on-demand hosted runs are documented in
-  [Nightly matrix and fixture UI](docs/CI_NIGHTLY.md); these runs remain release-ineligible.
-- Optional, once per clone: `scripts/install_git_privacy_hooks.sh` installs the hooks that block secrets and private data from being committed or pushed.
+Smoke reproduction uses public loopback fixtures and the
+[smoke runner](docs/CI_STRICT_RUNNER.md).
+Manual App Store screenshots run from the Evidence plans with the
+[exact commands and opt-in](docs/TESTING.md#app-store-screenshots).
+Optional once-per-clone privacy hooks: `scripts/install_git_privacy_hooks.sh`.
 
 ## Using AI coding agents
 
@@ -107,7 +78,7 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 - Run this before every push; it is the same set of checks a reviewer will run:
 
   ```bash
-  scripts/check_all.sh                     # formatting, conventions, release guards, localization, prerequisites, workflow policy, known-flaky registry, Python tests
+  scripts/check_all.sh                     # formatting, conventions, release guards, localization, prerequisites, workflow policy, Python tests
   scripts/check_all.sh --output-dir '<fresh-outside-repo>' # keep the host summary and identity in host-records/
   scripts/check_all.sh --with-unit-tests \
       --ios-destination 'platform=iOS Simulator,id=<UDID>' \
@@ -118,43 +89,37 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 - Naming and SwiftUI conventions (View / ViewModel / Store / Service roles, `@MainActor` for UI-driving types, no network or credential access in views) are in [AGENTS.md](AGENTS.md). Code comments are written in English and explain why, not what.
 - Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-The retained [iPhone, iPad and Apple TV UI workflow](docs/CI_UI.md), strict tracer and
-standalone P2 review workflow are manual-only pending legacy removal. PR publication
-depends only on `ci-gate`; a missing UI run does not delay or fail the verdict.
-The UI guide retains one-command shard reproduction by Git revision, listed-only retry,
-artifact retention and historical [post-merge reuse](docs/CI_UI.md#post-merge-reuse).
-Removing the last test of a shard, or any method assigned by the version 2
-manifest, requires a manifest edit with exact-head approval.
+## CI
 
-The informational `ci-gate` host job and [secret-free build archive jobs](docs/CI_BUILD_ARCHIVE.md)
-run on pull requests and pushes to `main`. Pushes to `main` replace a still-pending
-`ci-gate` run instead of queueing behind it, so superseded SHAs are
-"not evaluated" ([rules](docs/CI_PUBLISHER.md#main-push-coalescing)). Separate hosted runners execute the
-[complete iOS/tvOS unit targets from relocated archives](docs/CI_UNIT_TESTS.md).
-Every `ci-gate` run first classifies changes on Linux with the base reader before
-scheduling builds. On app-unaffected pull requests, both build/unit platform paths
-are not applicable,
-while host checks remain on macOS. Unknown and CI-trusted changes still run all
-gate jobs; the [publisher contract](docs/CI_PUBLISHER.md) explains the fail-closed rules.
-The retained manual [UI tier](docs/CI_UI.md) can consume the iOS archive for iPhone/iPad
-and the tvOS archive for Apple TV across runs.
-[P2 visual review](docs/CI_P2_REVIEWS.md) explains the fixture-only seven-day packages
-and the maintainer's signed record pull request; agents never supply human sign-off.
-Release archive preparation and the maintainer-gated App Store Connect steps are in
-[Xcode Cloud to internal TestFlight](docs/XCODE_CLOUD_TESTFLIGHT.md). Its first upload
-is manual, the Default workflow stays disabled, and tag starts need later approval.
-To keep its JSON and short Markdown records locally, run
-`"${PYTHON:-python3}" -B scripts/run_host_checks.py --output-dir /tmp/immichslides-host-run`.
-`check_all.sh` uses the same checks. `--output-dir` keeps records in `DIR/host-records`
-and optional unit bundles in `DIR`; choose a fresh directory. Without it, temporary
-host records are removed on exit. The final terminal report lists each host result
-and all nonpassing Python identities.
-`scripts/check_all.sh` defaults to two deterministic, time-balanced Python processes
-with static checks once. Use `--python-shards 1` to run the whole suite in one process.
-The direct host runner accepts the same option and default; both retain
-the existing per-child budget (900 seconds by default, at most 1200).
-See [the summary contract](docs/CI_SUMMARY.md) for validation, identity, result
-accounting and the current workflow boundary. Existing privacy checks remain required.
+PR CI is `ci-gate` (host checks, build and offline unit tests) plus
+`privacy-preflight-bootstrap` and `privacy-preflight-trusted`.
+The gate's own job results are the PR result; there is no status publisher or
+per-push CI approval step. GitHub may separately hold a first-time fork
+contributor's run for its built-in approval.
+The main ruleset requires the two privacy checks.
+
+Host checks always run in Linux/macOS partitions. Base-owned classification can
+mark both platform build/unit paths not applicable for App-unaffected PRs;
+unknown or CI-trusted changes run them. Main pushes run both platforms.
+Builds produce [secret-free archives](docs/CI_BUILD_ARCHIVE.md), then
+[source-free unit consumers](docs/CI_UNIT_TESTS.md) enumerate and execute them.
+PR CI's `build-for-testing` compiles every scheme testable, including the UI
+target's smoke and App Store screenshot methods, but runs no UI tests.
+The [sole smoke nightly](docs/CI_NIGHTLY.md) compiles and runs smoke when main changes:
+seven core flows on the daily schedule, all 23 on manual dispatch before release.
+Smoke results are reported and never block merges.
+
+`scripts/check_all.sh` defaults to two Python shards with static checks once;
+`--python-shards 1` runs one process.
+`--output-dir DIR` retains host records in `DIR/host-records`, and optional
+unit bundles in `DIR`. Choose a fresh outside-repo directory and remove it
+after reading. [Host records](docs/CI_SUMMARY.md) describe counts and failure
+accounting. The [toolchain workflow](docs/CI_TOOLCHAIN.md) additionally runs for
+its configured PR paths.
+
+Release uploads remain separate from CI. [Archive-only Xcode Cloud](docs/XCODE_CLOUD_TESTFLIGHT.md)
+documents internal TestFlight and the maintainer's explicit upload gate.
+CI success or a smoke result does not authorize a tag, release or deployment.
 
 ## Tests
 
@@ -166,7 +131,6 @@ Follow [docs/TESTING.md](docs/TESTING.md). In short:
 - Do not put ticket numbers, process codes or non-English text in test names.
 - Screenshot, capture and performance tooling goes in the `Evidence` test plans (`immichSlides-Evidence-iOS.xctestplan`, `immichSlides-Evidence-tvOS.xctestplan`), not in the default plans.
 - Tests do not depend on your simulator language for the app's own text: the test plans run the app in Simplified Chinese, so UI tests show a Chinese interface. System dialogs follow the simulator, and the tests handle English and Chinese ones, so use a simulator set to English or Chinese. In unit tests, compare user-visible text with `String(localized: "English key")`. In UI tests, find elements by `accessibilityIdentifier`: the UI test process cannot read the app's string catalog.
-- Strict end-to-end tests are not in the default or Evidence test plans. Run them with `scripts/run_strict_e2e.py`, which starts the local fixture server and fails if any test skips; run any other way, they fail and name the missing input.
 - `python3 scripts/check_test_conventions.py` checks the machine-checkable rules.
 
 ## UI changes
@@ -205,7 +169,7 @@ The app uses SDWebImageSwiftUI and its transitive dependency SDWebImage through 
 
 ### Locked package resolution
 
-The committed `immichSlides.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved` is the source of package versions and revisions for CI builds. The offline unit, strict E2E and access-lifecycle runners pass `-disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile` to Xcode, so a missing or incompatible resolution fails instead of selecting other versions. Direct CI build commands must pass both flags too:
+The committed `immichSlides.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved` is the source of package versions and revisions for CI builds. The offline unit and smoke runners pass `-disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile` to Xcode, so a missing or incompatible resolution fails instead of selecting other versions. Direct CI build commands must pass both flags too:
 
 ```bash
 xcodebuild build -project immichSlides.xcodeproj -scheme immichSlides \
