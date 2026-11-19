@@ -45,7 +45,7 @@ def archive_download_summary():
     summary = valid_summary()
     summary["identity"] = {"schema_version": 1, "event": "schedule", "repository": "sudoHG/immichSlides",
                            "ref": "refs/heads/main", "commit_sha": "a" * 40, "tree_sha": "b" * 40}
-    summary["source"].update(event="schedule", workflow_path=".github/workflows/ci-nightly.yml")
+    summary["source"].update(event="schedule", workflow_path=".github/workflows/ci-smoke-shadow.yml")
     summary["run"] = {"id": "123", "attempt": 2, "tier": "ui", "job": "ui-ipad", "shard": "navigation"}
     case = ci_summary.test_identity("ui", "NavigationUITests/testOpen", platform="ios", device="ipad")
     summary["population"].update(declared=[case], compiled=[case], observed=[ci_summary.observation(case, "passed", 1)])

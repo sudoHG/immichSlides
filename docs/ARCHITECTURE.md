@@ -30,8 +30,8 @@ The root flow is `ContentView` with `AppFlowStateMachine` and `AppRoute` (`first
 | `Config/` | `env.example.xcconfig` and `Debug.xcconfig`. The optional, git-ignored `env.xcconfig` is included by `Debug.xcconfig`, which is referenced only by Debug configurations. |
 | `immichSlides/Localizable.xcstrings` | Every user-visible string. |
 | `immichSlidesTests/` | Unit tests (Swift Testing). Files with `Live` in the name (for example `PlaybackPoolResolverLiveIntegrationTests`) need a real server and skip without one. |
-| `immichSlidesUITests/` | UI tests (XCTest), including the `StrictE2E*` flows run by `scripts/run_strict_e2e.py`. |
-| `TestSupport/` | Helpers shared by test targets (server config, strict E2E inputs, evidence manifests). Never used by production code. |
+| `immichSlidesUITests/` | Smoke flows (XCTest) plus manual App Store screenshot tooling. PR CI does not compile this target; the smoke nightly does. |
+| `TestSupport/` | Shared unit/UI helpers, public fixture inputs, waits and first-failure capture. Never used by production code. |
 | `scripts/` | Test runners, lint and release checks, localization tools, privacy gate. Most scripts have a matching `test_*.py`. |
 
 Target membership: the app is one Xcode target built for iOS and tvOS, using synchronized folders. Files under `iOS/` and `tvOS/` are kept to their platform by per-file platform filters in the project (a few use a file-wide `#if os(...)` instead). A new file in those folders builds for both platforms until you set its filter, so check it and state it in your report. Every other file in the folder is compiled or copied into the app bundle, so keep notes, backups and scratch files outside `immichSlides/`. The target's membership exceptions keep two files out of automatic membership: `Info.plist` (read through the `INFOPLIST_FILE` build setting) and `PrivacyInfo.xcprivacy` (bundled through its own file reference). Local build configuration lives in the repository-root `Config/`, outside the app folder. `scripts/check_release_guards.py` fails if any file in a `Config/` folder or any `.xcconfig` file (including backups such as `env.xcconfig.bak`) sits inside `immichSlides/`, even when it is listed as an exception, if a stale config exception remains in the app target, or if an `.xcconfig` is added to a build phase.
@@ -101,24 +101,23 @@ Published playback facts have no internal setter: `assets`, `currentIndex`, `tar
 
 ### Runtime evidence
 
-`ReduceMotionEvidenceProbe` is a read-only DEBUG view used by the strict P2 motion
-suite on both iOS and tvOS through the shared synchronized folder. With
+`ReduceMotionEvidenceProbe` is a retained read-only DEBUG view on both platforms. With
 `PlatformCompat.reduceMotionEvidenceDirectoryForTesting` enabled, it records UIKit
 state/notifications and SwiftUI's Reduce Motion environment in `motion-app-evidence.json`.
 It never writes preferences or feeds playback state; the existing platform views
-remain the reducer's Reduce Motion source. See the [host handshake](CI_STRICT_RUNNER.md#reduce-motion-command-handshake).
+remain the reducer's Reduce Motion source. Its legacy host handshake was retired.
 The evidence-directory key is exempt from Debug XCTest-mode detection, so enabling
 this probe preserves the normal Keychain and Info.plist configuration paths.
 
 The separate DEBUG-only `PlaybackLifecycleTimeline` observes lifecycle receipts
-and committed render ticks for the Debug pause timing suites. It writes sparse
-JSONL into the XCTest-supplied host evidence directory through `PlatformCompat`,
+and committed render ticks. It writes sparse JSONL into an explicitly supplied
+host evidence directory through `PlatformCompat`,
 with launch/case nonces and contiguous sequence numbers. Its render observer
 reuses the scene visibility transaction-completion and next-display-tick boundary;
 it never delivers reducer events or changes playback clocks. All photo identities
 are hashed. Shared target membership includes iOS and tvOS; the recorder and its
-observer compile out of Release. The timing and independent screenshot contracts
-are documented in [testing](TESTING.md#running-controlled-integration-and-end-to-end-tests).
+observer compile out of Release. Legacy timing suites were retired; retaining
+the observer does not establish current UI coverage.
 Launch configuration and scene/asset hashes are cached; request changes refresh a
 cached challenge through directory notifications. Render ticks perform no request
 file reads, and numeric layer comparisons defer fingerprint hashing to sparse events.
@@ -152,7 +151,7 @@ The tvOS album and person filter pages make each card row and the top bar separa
 
 `SlideShowViewModel+SettingsApplication.swift` owns the settings refresh run on slideshow entry and on `UserDefaults.didChangeNotification`. The platform EXIF adapters supply synchronous visibility setters. The refresh applies the view model's playback settings, reads the presentation settings, updates EXIF then debug-overlay visibility, decides whether the source changed, and schedules an asynchronous source switch only when needed. Cold-launch source selection stays in `ContentView.initialPlaybackSourceForColdLaunch()`. This extension has no stored state and joins both platforms through the app's synchronized `Shared/` folder.
 
-Playback QA strings, overlay download metrics, ViewModel injection hooks and diagnostic Vision state compile only in Debug. Their numeric runtime timing records, ordinary download logs and the Vision service used by solo-person filtering remain available in Release. UI-test preparation, hint suppression, reset and contract-probe switches are owned by `PlatformCompat`; focus marker exposure uses `shouldExposeUITestProbes` without changing tvOS focus routing. Release settings-resume suites launch through the real UI with no `UI_TEST_*` overrides.
+Playback QA strings, overlay download metrics, ViewModel injection hooks and diagnostic Vision state compile only in Debug. Their numeric runtime timing records, ordinary download logs and the Vision service used by solo-person filtering remain available in Release. UI-test preparation, hint suppression, reset and contract-probe switches are owned by `PlatformCompat`; focus marker exposure uses `shouldExposeUITestProbes` without changing tvOS focus routing. Release smoke flows launch through the real UI with no `UI_TEST_*` overrides.
 
 ### Presentation policy and private values
 
@@ -358,9 +357,7 @@ their session-identity changes. Pool acquisition and application read current id
 the owner each time, so a reset without a source-generation change still rejects stale initial work.
 
 The ledger value types are co-located with the owner in the synchronized Shared folder and compile
-on both iOS and tvOS. Its diagnostic history snapshot and fixture hooks are Debug-only. The
-[standalone planner benchmark](TESTING.md#standalone-smartfill-planner-benchmark) depends on the
-engine/planner sources and does not need the session owner or facade extensions.
+on both iOS and tvOS. Its diagnostic history snapshot and fixture hooks are Debug-only.
 
 ## 4. Concurrency and state rules
 
@@ -430,21 +427,20 @@ Use these words, and the code names in backticks, instead of inventing new ones.
 - **access protection**: optional PIN gate on settings (`AccessProtectionStore`, `AccessProtectionViewModel`, `PinEntrySheetView`). **recovery** is the state where the flag is on but the PIN is missing from the Keychain (`isRecoveryNeeded`).
 - **onboarding session**: the first-boot → mode selection → filter summary sequence (`AppFlowStateMachine.isOnboardingSession`). Only it allows going back to mode selection.
 - **live test**: a test that needs a real Immich server configured in `env.xcconfig`; it skips without one.
-- **strict E2E**: UI flows run against a local public fixture server by `scripts/run_strict_e2e.py`.
-- **evidence**: screenshot, capture and measurement tooling that does not pass or fail. It runs only in the `Evidence` test plans.
+- **smoke flow**: a core user/system boundary run against public loopback fixtures by `scripts/run_strict_e2e.py --suite smoke-flow`; the manifest maps 20 methods to 23 device flows.
+- **evidence**: manually selected screenshot or measurement tooling. Evidence plans retain App Store screenshot classes and the unit target's conditional evidence cases; outputs need human review.
 
 ## 6. Testing and tooling
 
 - Test rules, naming, test plans and the `Evidence` split: [docs/TESTING.md](TESTING.md).
-- Commands for offline unit tests, script tests, localization and release checks: the Commands section of [AGENTS.md](../AGENTS.md).
-- End-to-end runners and suites: [docs/TESTING.md](TESTING.md#running-controlled-integration-and-end-to-end-tests).
+- Contributor setup and checks: [CONTRIBUTING.md](../CONTRIBUTING.md#setup).
+- Smoke mechanics and scheduling: [Smoke runner](CI_STRICT_RUNNER.md) and [Smoke nightly](CI_NIGHTLY.md).
 - Scripts:
   - `run_offline_unit_tests.py`: offline unit tests per platform
-  - `run_strict_e2e.py`: strict E2E flows
+  - `run_strict_e2e.py`: smoke flows only
   - `check_test_conventions.py`: test naming and structure lint
   - `check_release_guards.py`: debug-only code, test hooks and layer boundaries
-  - `validate_localization_catalog.py`, `scan_chinese_strings.py`, `clean_stale_catalog_entries.py`: localization
-  - `check_smartfill_visual_fallbacks.py`: flags visual fallbacks and SmartFill renderer changes in a diff
+  - `validate_localization_catalog.py`, `scan_chinese_strings.py`: localization
   - `install_git_privacy_hooks.sh`, `git_privacy_gate.py`: privacy gate
 
   All of these are in `scripts/`.

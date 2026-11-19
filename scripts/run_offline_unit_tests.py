@@ -197,7 +197,6 @@ def build_test_command(
     destination: str,
     derived_data_path: str | None = None,
     result_bundle_path: str | None = None,
-    full_plan: bool = False,
     only_testing: list[str] | None = None,
     project: str = PROJECT,
 ) -> list[str]:
@@ -205,8 +204,6 @@ def build_test_command(
         raise CommandError("Unsupported platform; only ios and tvos are allowed.")
     if not destination or not destination.strip():
         raise CommandError("--destination is required (the actual simulator id or name); do not guess the default device.")
-    if full_plan and only_testing:
-        raise CommandError("--full-plan and --only-testing cannot be used together.")
     scheme_path = find_platform_scheme(repo_root, platform)
     plan_names = parse_scheme_test_plans(scheme_path)
     if not plan_names:
@@ -230,15 +227,14 @@ def build_test_command(
         "-destination",
         destination,
     ]
-    if not full_plan:
-        selected = only_testing or business_targets(plan_target_names(plan_path))
-        if not selected:
-            raise CommandError(f"{plan_file} has no business targets that can be selected by default.")
-        for target in selected:
-            if target.startswith("-only-testing:"):
-                command.append(target)
-            else:
-                command.append(f"-only-testing:{target}")
+    selected = only_testing or business_targets(plan_target_names(plan_path))
+    if not selected:
+        raise CommandError(f"{plan_file} has no business targets that can be selected by default.")
+    for target in selected:
+        if target.startswith("-only-testing:"):
+            command.append(target)
+        else:
+            command.append(f"-only-testing:{target}")
     if derived_data_path:
         command.extend(["-derivedDataPath", derived_data_path])
     if result_bundle_path:
@@ -403,7 +399,6 @@ def format_test_results_summary(
     summary: TestResultsSummary,
     *,
     only_testing: list[str] | None,
-    full_plan: bool,
 ) -> str:
     return (
         f"Offline test verdict: {classify_test_results(summary)}; "
@@ -412,7 +407,7 @@ def format_test_results_summary(
         f"failedTests={summary.failed_tests} "
         f"skippedTests={summary.skipped_tests} "
         f"result={summary.result}; "
-        f"{describe_test_filters(only_testing, full_plan)}."
+        f"{describe_test_filters(only_testing)}."
     )
 
 
@@ -447,11 +442,9 @@ def read_official_test_results_summary(bundle_path: Path, *, timeout_seconds: fl
     return parse_official_test_results_summary(completed.stdout)
 
 
-def describe_test_filters(only_testing: list[str] | None, full_plan: bool) -> str:
+def describe_test_filters(only_testing: list[str] | None) -> str:
     if only_testing:
         return "Filter: " + ", ".join(only_testing)
-    if full_plan:
-        return "Filter: full platform plan (without -only-testing)"
     return "Filter: default business targets"
 
 
@@ -459,7 +452,6 @@ def confirm_successful_run(
     *,
     result_bundle_path: str | None,
     only_testing: list[str] | None,
-    full_plan: bool,
     read_summary: Callable[[Path], TestResultsSummary],
 ) -> TestResultsSummary:
     # xcodebuild exit 0 means only that the command succeeded; the verdict is calculated separately from official counts.
@@ -473,7 +465,7 @@ def confirm_successful_run(
         raise CommandError(
             "This run's official xcresult summary has totalTestCount=0 "
             f"(result={summary.result}). "
-            f"{describe_test_filters(only_testing, full_plan)}. "
+            f"{describe_test_filters(only_testing)}. "
             "The filter matched no tests; this cannot be treated as a pass. "
             "Swift Testing test identifiers usually need parentheses, for example normalizeServerURLWorks()."
         )
@@ -501,7 +493,6 @@ def main(
     parser.add_argument("--destination", help="Actual simulator destination passed to xcodebuild")
     parser.add_argument("--derived-data-path", "--derived-data")
     parser.add_argument("--result-bundle-path", "--result-bundle")
-    parser.add_argument("--full-plan", action="store_true", help="Use the full platform unit test plan")
     parser.add_argument("--only-testing", action="append", help="Override default business targets; repeatable")
     parser.add_argument("--check", action="store_true", help="Parse scheme/plan/config only; do not call Xcode")
     parser.add_argument("--print-command", action="store_true", help="Print the xcodebuild command and exit")
@@ -548,7 +539,6 @@ def main(
             destination=args.destination or "",
             derived_data_path=args.derived_data_path,
             result_bundle_path=args.result_bundle_path,
-            full_plan=args.full_plan,
             only_testing=only_testing,
             project=args.project,
         )
@@ -571,14 +561,12 @@ def main(
         summary = confirm_successful_run(
             result_bundle_path=args.result_bundle_path,
             only_testing=only_testing,
-            full_plan=args.full_plan,
             read_summary=read_summary,
         )
         print(
             format_test_results_summary(
                 summary,
                 only_testing=only_testing,
-                full_plan=args.full_plan,
             ),
             file=stdout,
         )

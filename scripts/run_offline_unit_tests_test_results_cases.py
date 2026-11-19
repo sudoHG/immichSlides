@@ -418,10 +418,6 @@ class ResultGuardCLITestsCases:
         self.assertEqual(reads, [])
 
 
-
-
-
-
     def test_print_command_does_not_read_result_bundle(self) -> None:
         reads: list[Path] = []
         code = main(

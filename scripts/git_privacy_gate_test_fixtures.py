@@ -50,11 +50,6 @@ TRUSTED_RUNNER = REPOSITORY_ROOT / "scripts/run_trusted_privacy_preflight.sh"
 CONTRIBUTING = REPOSITORY_ROOT / "CONTRIBUTING.md"
 
 
-SMART_FILL_UI_TESTS = (
-    REPOSITORY_ROOT / "immichSlidesUITests/PlaybackSmartFillVisualUITests.swift"
-)
-
-
 ZERO_OID = "0" * 40
 
 

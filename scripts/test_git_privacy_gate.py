@@ -19,7 +19,6 @@ from git_privacy_gate_test_fixtures import (
     Path,
     REPOSITORY_ROOT,
     SCRIPT,
-    SMART_FILL_UI_TESTS,
     TRUSTED_RUNNER,
     TRUSTED_WORKFLOW,
     ZERO_OID,
