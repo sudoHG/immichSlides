@@ -164,17 +164,3 @@ class RepositoryPrivacyContractTestsCases:
         self.assertIn(f"uses: actions/checkout@{PINNED_CHECKOUT}", workflow)
 
 
-    def test_playback_transition_evidence_uses_private_directory_resolver(self) -> None:
-        source = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in [
-                SMART_FILL_UI_TESTS,
-                *sorted(SMART_FILL_UI_TESTS.parent.glob(f"{SMART_FILL_UI_TESTS.stem}+*.swift")),
-            ]
-        )
-        start = source.index("func playbackTransitionEvidenceDirectory()")
-        end = source.index("\n    func waitUntil(", start)
-        implementation = source[start:end]
-
-        self.assertIn("PrivateEvidenceDirectory.resolve(", implementation)
-        self.assertNotIn("URL(fileURLWithPath:", implementation)

@@ -348,48 +348,6 @@ extension XCUIApplication {
 
 #if os(tvOS)
 extension XCUIApplication {
-    // Select can dismiss the keyboard; a later Menu would then exit the App at its root.
-    func dismissTVOSKeyboardIfPresent(before deadline: Date) {
-        guard Date() < deadline, let root = try? snapshot() else { return }
-        var pending = [root]
-        var hasVisibleKeyboard = false
-        while let node = pending.popLast() {
-            if node.elementType == .keyboard, !node.frame.isEmpty, root.frame.intersects(node.frame) {
-                hasVisibleKeyboard = true
-                break
-            }
-            pending.append(contentsOf: node.children)
-        }
-        guard hasVisibleKeyboard, state == .runningForeground, Date() < deadline else { return }
-        FirstFailureRemote.press(.menu)
-    }
-
-    // Return a confirmed move, a confirmed edge, or an unknown observation without failing the poll.
-    func pressAndWaitForTVOSFocusMovement(
-        _ direction: XCUIRemote.Button, to identifier: String?, timeout: TimeInterval
-    ) -> Bool? {
-        let previous = evidenceSnapshotsByIdentifier().sorted { $0.key < $1.key }.first { $0.value.hasFocus }?.value
-        FirstFailureRemote.press(direction)
-        let deadline = Date().addingTimeInterval(timeout)
-        var hasConfirmedUnchangedFocus = false
-        while Date() < deadline {
-            let snapshots = evidenceSnapshotsByIdentifier()
-            guard Date() < deadline else { return nil }
-            if let identifier, snapshots[identifier]?.hasFocus == true { return true }
-            hasConfirmedUnchangedFocus = false
-            if let previous,
-                let current = snapshots.sorted(by: { $0.key < $1.key }).first(where: { $0.value.hasFocus })?.value
-            {
-                if current.identifier != previous.identifier || current.elementType != previous.elementType {
-                    return true
-                }
-                hasConfirmedUnchangedFocus = true
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusSettle))
-        }
-        return hasConfirmedUnchangedFocus ? false : nil
-    }
-
     func refreshTVOSSlideshowControlBar(timeout: TimeInterval) -> Bool {
         FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
         FirstFailureContext.beginWait(seconds: timeout)
@@ -1274,4 +1232,8 @@ enum UITestSupportWaitTiming {
     static let elementAppearanceTimeoutSeconds: TimeInterval = TestWait.seconds(.product(5))
     static let identityPollSeconds: TimeInterval = TestWait.seconds(.product(0.3))
     static let readbackTimeoutSeconds: TimeInterval = TestWait.seconds(.product(2))
+}
+
+enum Timing {
+    static let focusSettle: TimeInterval = TestWait.seconds(.product(0.16))
 }
