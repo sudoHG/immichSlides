@@ -8,10 +8,8 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 from run_offline_unit_tests_test_fixtures import (
-    ACCESS_LIFECYCLE_HOST_SELECTORS,
     CommandError,
     DEFAULT_TIMEOUT_MINUTES,
-    EXTERNAL_RUNTIME_TEST_SELECTOR,
     ElementTree,
     GENERIC_SCHEME,
     IOS_ONE_PASSED_OFFICIAL_SUMMARY,
@@ -50,7 +48,6 @@ from run_offline_unit_tests_test_fixtures import (
     prepare_example_config,
     re,
     read_official_test_results_summary,
-    resolve_suite_selectors,
     scheme_test_plan_names,
     shutil,
     subprocess,

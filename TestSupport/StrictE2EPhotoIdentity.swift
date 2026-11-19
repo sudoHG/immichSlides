@@ -20,97 +20,9 @@ enum StrictE2EPhotoIdentity {
         let meanLuma: Double
         let notes: [String]
 
-        // Next proves a change of photos, not a rearrangement of the same slots.
-        var navigationMark: String? {
-            guard status == .match, let mark else { return nil }
-            return mark.split(separator: "+").sorted().joined(separator: "+")
-        }
-    }
-
-    // Calibrate the unchanged Settings glyph before timing starts, then read only captured pixels.
-    struct ControlBarReference {
-        let normalizedRect: CGRect
-        private let centeredPixels: [Double]
-        private let magnitude: Double
-        private static let edgePixels = 32
-        private static let minimumContrast = 8.0  // RMS deviation in 8-bit grey levels over the centered 32x32 sample.
-        private static let minimumCorrelation = 0.8
-
-        init?(png: Data, normalizedRect: CGRect) {
-            guard let pixels = Self.pixels(png: png, normalizedRect: normalizedRect) else { return nil }
-            let centered = Self.center(pixels)
-            let magnitude = sqrt(centered.reduce(0) { $0 + $1 * $1 })
-            guard magnitude / sqrt(Double(centered.count)) >= Self.minimumContrast else { return nil }
-            self.normalizedRect = normalizedRect
-            self.centeredPixels = centered
-            self.magnitude = magnitude
-        }
-
-        func isVisible(png: Data) -> Bool? {
-            guard let pixels = Self.pixels(png: png, normalizedRect: normalizedRect) else { return nil }
-            let centered = Self.center(pixels)
-            let magnitude = sqrt(centered.reduce(0) { $0 + $1 * $1 })
-            guard magnitude / sqrt(Double(centered.count)) >= Self.minimumContrast else { return false }
-            let dot = zip(centeredPixels, centered).reduce(0) { $0 + $1.0 * $1.1 }
-            return dot / (self.magnitude * magnitude) >= Self.minimumCorrelation
-        }
-
-        private static func center(_ pixels: [Double]) -> [Double] {
-            let mean = pixels.reduce(0, +) / Double(pixels.count)
-            return pixels.map { $0 - mean }
-        }
-
-        private static func pixels(png: Data, normalizedRect: CGRect) -> [Double]? {
-            guard normalizedRect.width > 0, normalizedRect.height > 0,
-                CGRect(x: 0, y: 0, width: 1, height: 1).contains(normalizedRect),
-                let source = CGImageSourceCreateWithData(png as CFData, nil),
-                let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-                let crop = image.cropping(
-                    to: CGRect(
-                        x: normalizedRect.minX * CGFloat(image.width),
-                        y: normalizedRect.minY * CGFloat(image.height),
-                        width: normalizedRect.width * CGFloat(image.width),
-                        height: normalizedRect.height * CGFloat(image.height)
-                    ).integral)
-            else { return nil }
-            var bytes = [UInt8](repeating: 0, count: edgePixels * edgePixels)
-            let didDraw = bytes.withUnsafeMutableBytes { buffer -> Bool in
-                guard
-                    let context = CGContext(
-                        data: buffer.baseAddress, width: edgePixels, height: edgePixels,
-                        bitsPerComponent: 8, bytesPerRow: edgePixels,
-                        space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
-                    )
-                else { return false }
-                context.interpolationQuality = .high
-                context.draw(crop, in: CGRect(x: 0, y: 0, width: edgePixels, height: edgePixels))
-                return true
-            }
-            return didDraw ? bytes.map(Double.init) : nil
-        }
-    }
-
-    enum AssertionError: LocalizedError {
-        case message(String)
-        var errorDescription: String? {
-            switch self {
-            case .message(let text):
-                return text
-            }
-        }
     }
 
     private static let marks = ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8"]
-    private static let expectedExif: [String: String?] = [
-        "A1": "Fixture 1",
-        "A2": nil,
-        "A3": "Fixture 3",
-        "A4": nil,
-        "A5": "Fixture 5",
-        "A6": nil,
-        "A7": "Fixture 7",
-        "A8": nil
-    ]
     private static let keyColors: [String: Set<String>] = [
         "A1": ["green", "purple"],
         "A2": ["green", "gray"],
@@ -201,19 +113,8 @@ enum StrictE2EPhotoIdentity {
     private static let closeScoreRatio: Double = 1.18
     private static let maximumCloseScoreDifference: Double = 0.035
 
-    static func overlayModel(from overlayText: String) -> String? {
-        for model in ["Fixture 1", "Fixture 3", "Fixture 5", "Fixture 7"] where overlayText.contains(model) {
-            return model
-        }
-        return nil
-    }
-
     static func classify(png: Data) -> Result {
         classify(png: png, shouldQualifySinglePhoto: true)
-    }
-
-    static func classifyRejectionEvidence(png: Data) -> Result {
-        classify(png: png, shouldQualifySinglePhoto: false)
     }
 
     private static func classify(png: Data, shouldQualifySinglePhoto: Bool) -> Result {
@@ -838,16 +739,6 @@ enum StrictE2EPhotoIdentity {
             notes: region.notes + ["complete-public-scene-region"])
     }
 
-    static func rejectionRegions(png: Data) -> [String: Result] {
-        var regions = ["full": classifyRejectionEvidence(png: png)]
-        for item in displayRegionBoxes {
-            if let cropped = cropPNG(png, box: item.box) {
-                regions[item.name] = classifyRejectionEvidence(png: cropped)
-            }
-        }
-        return regions
-    }
-
     static func captureIdentityForOutOfOrderValidator(png: Data) -> Result {
         // The host out-of-order validator grants no strict-slot system-chrome exclusion.
         legacyCaptureIdentity(png: png)
@@ -876,37 +767,6 @@ enum StrictE2EPhotoIdentity {
             )
         }
         return full
-    }
-
-    static func assertExifCorrespondence(_ identity: Result, overlayText: String) throws {
-        guard identity.status == .match, let mark = identity.mark, expectedExif.keys.contains(mark) else {
-            throw AssertionError.message(
-                "Can't check EXIF: photo status \(identity.status.rawValue) mark=\(identity.mark ?? "nil")")
-        }
-        let expected = expectedExif[mark] ?? nil
-        let actual = overlayModel(from: overlayText)
-        if expected != actual {
-            throw AssertionError.message(
-                "EXIF does not match the photo: mark=\(mark) expected=\(expected ?? "nil") actual=\(actual ?? "nil")"
-            )
-        }
-    }
-
-    static func assertRequiredFrames(_ present: [String: Bool], required: [String]) throws {
-        let missing = required.filter { present[$0] != true }
-        if !missing.isEmpty {
-            throw AssertionError.message("Window missed or required frames missing: " + missing.joined(separator: ", "))
-        }
-    }
-
-    static func payload(_ identity: Result) -> [String: Any] {
-        [
-            "status": identity.status.rawValue,
-            "mark": identity.mark ?? NSNull(),
-            "mean_luma": identity.meanLuma,
-            "notes": identity.notes,
-            "scores": identity.scores
-        ]
     }
 
     private static func capturePixels(image: CGImage, colorSpace: CGColorSpace? = nil) -> (
@@ -1520,61 +1380,9 @@ enum StrictE2EPhotoIdentity {
 }
 
 enum StrictE2EVisualEvidence {
-    enum WriteError: LocalizedError {
-        case missingDirectory
-        case writeFailed(String)
-
-        var errorDescription: String? {
-            switch self {
-            case .missingDirectory:
-                return "STRICT_E2E_EVIDENCE_DIR is missing; cannot write photo identity evidence"
-            case .writeFailed(let name):
-                return "Cannot write evidence \(name)"
-            }
-        }
-    }
-
     static func directory() -> URL? {
         let path = ProcessInfo.processInfo.environment["STRICT_E2E_EVIDENCE_DIR"] ?? ""
         guard !path.isEmpty else { return nil }
         return URL(fileURLWithPath: path)
-    }
-
-    static func writePNG(_ data: Data, name: String) {
-        guard let directory = directory() else { return }
-        try? data.write(to: directory.appendingPathComponent("\(name).png"), options: .atomic)
-    }
-
-    static func writeJSON(_ payload: [String: Any], name: String) {
-        guard let directory = directory(),
-            JSONSerialization.isValidJSONObject(payload),
-            let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
-        else { return }
-        try? data.write(to: directory.appendingPathComponent(name), options: .atomic)
-    }
-
-    // Filter identity evidence must be written to disk; a missing directory must not be skipped silently and
-    // mislead Python.
-    static func writeRequiredPNG(_ data: Data, name: String) throws {
-        guard let directory = directory() else { throw WriteError.missingDirectory }
-        do {
-            try data.write(to: directory.appendingPathComponent("\(name).png"), options: .atomic)
-        } catch {
-            throw WriteError.writeFailed("\(name).png")
-        }
-    }
-
-    static func writeRequiredJSON(_ payload: [String: Any], name: String) throws {
-        guard let directory = directory() else { throw WriteError.missingDirectory }
-        guard JSONSerialization.isValidJSONObject(payload),
-            let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
-        else {
-            throw WriteError.writeFailed(name)
-        }
-        do {
-            try data.write(to: directory.appendingPathComponent(name), options: .atomic)
-        } catch {
-            throw WriteError.writeFailed(name)
-        }
     }
 }

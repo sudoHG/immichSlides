@@ -38,21 +38,6 @@ PLATFORM_SCHEME_SUFFIX = {
     "ios": "-iOS.xcscheme",
     "tvos": "-tvOS.xcscheme",
 }
-EXTERNAL_RUNTIME_TEST_SELECTOR = (
-    "immichSlidesTests/PlaybackRuntimeEvidenceManifestTests/"
-    "externalRuntimeJSONLPassesValidator()"
-)
-EXTERNAL_RUNTIME_TEST_SELECTOR_WITHOUT_ARGUMENTS = EXTERNAL_RUNTIME_TEST_SELECTOR[:-2]
-ACCESS_LIFECYCLE_HOST_SELECTORS = [
-    "immichSlidesTests/AccessProtectionStoreTests",
-    "immichSlidesTests/PlaybackSettingsViewModelTests",
-    "immichSlidesTests/ManualPlaybackLifecycleTests",
-    "immichSlidesTests/SceneLifecycleContractTests",
-    "immichSlidesTests/StableMarkTimingTests",
-]
-OFFLINE_SUITES = {
-    "access-lifecycle": ACCESS_LIFECYCLE_HOST_SELECTORS,
-}
 
 
 @contextmanager
@@ -205,24 +190,6 @@ def find_platform_scheme(repo_root: Path, platform: str) -> Path:
     return matches[0]
 
 
-def resolve_suite_selectors(suite: str) -> list[str]:
-    selectors = OFFLINE_SUITES.get(suite)
-    if selectors is None:
-        known = ", ".join(sorted(OFFLINE_SUITES))
-        raise CommandError(f"Unknown offline suite: {suite}. Currently supported: {known}.")
-    return list(selectors)
-
-
-def is_external_runtime_test_selector(value: str) -> bool:
-    selector = value.strip()
-    if selector.startswith("-only-testing:"):
-        selector = selector[len("-only-testing:") :]
-    return selector in {
-        EXTERNAL_RUNTIME_TEST_SELECTOR,
-        EXTERNAL_RUNTIME_TEST_SELECTOR_WITHOUT_ARGUMENTS,
-    }
-
-
 def build_test_command(
     *,
     repo_root: Path,
@@ -233,7 +200,6 @@ def build_test_command(
     full_plan: bool = False,
     only_testing: list[str] | None = None,
     project: str = PROJECT,
-    skip_external_runtime_gate: bool = True,
 ) -> list[str]:
     if platform not in PLATFORM_SCHEME_SUFFIX:
         raise CommandError("Unsupported platform; only ios and tvos are allowed.")
@@ -241,14 +207,6 @@ def build_test_command(
         raise CommandError("--destination is required (the actual simulator id or name); do not guess the default device.")
     if full_plan and only_testing:
         raise CommandError("--full-plan and --only-testing cannot be used together.")
-    if skip_external_runtime_gate and only_testing:
-        if any(is_external_runtime_test_selector(value) for value in only_testing):
-            raise CommandError(
-                "externalRuntimeJSONLPassesValidator() is external evidence tooling and cannot be "
-                "selected through the offline runner; run it from the Evidence test plan with "
-                "IMMICHSLIDES_RUNTIME_JSONL_FOR_VALIDATION set to the JSONL path."
-            )
-
     scheme_path = find_platform_scheme(repo_root, platform)
     plan_names = parse_scheme_test_plans(scheme_path)
     if not plan_names:
@@ -281,8 +239,6 @@ def build_test_command(
                 command.append(target)
             else:
                 command.append(f"-only-testing:{target}")
-    if skip_external_runtime_gate:
-        command.append(f"-skip-testing:{EXTERNAL_RUNTIME_TEST_SELECTOR}")
     if derived_data_path:
         command.extend(["-derivedDataPath", derived_data_path])
     if result_bundle_path:
@@ -342,11 +298,7 @@ def check_repo(repo_root: Path, stdout: TextIO, stderr: TextIO) -> None:
         )
     print("The generic immichSlides scheme is for build/run/archive only, not for running tests.", file=stdout)
     print(
-        "By default, the entry point selects only business targets in the plan; the full plan includes UI, and live tests within business targets are enabled according to configuration.",
-        file=stdout,
-    )
-    print(
-        "1 external evidence test not run; run it from the Evidence test plan with IMMICHSLIDES_RUNTIME_JSONL_FOR_VALIDATION set.",
+        "By default, the entry point selects only business targets in the unit-only plan; live tests are enabled according to configuration.",
         file=stdout,
     )
     print(inspect_config(repo_root).report, file=stdout)
@@ -549,9 +501,8 @@ def main(
     parser.add_argument("--destination", help="Actual simulator destination passed to xcodebuild")
     parser.add_argument("--derived-data-path", "--derived-data")
     parser.add_argument("--result-bundle-path", "--result-bundle")
-    parser.add_argument("--full-plan", action="store_true", help="Use the full platform test plan, including UI")
+    parser.add_argument("--full-plan", action="store_true", help="Use the full platform unit test plan")
     parser.add_argument("--only-testing", action="append", help="Override default business targets; repeatable")
-    parser.add_argument("--suite", help="Named offline suite; currently only access-lifecycle")
     parser.add_argument("--check", action="store_true", help="Parse scheme/plan/config only; do not call Xcode")
     parser.add_argument("--print-command", action="store_true", help="Print the xcodebuild command and exit")
     parser.add_argument("--prepare-example-config", action="store_true")
@@ -591,10 +542,6 @@ def main(
         if args.platform is None:
             raise CommandError("--platform ios or tvos must be specified.")
         only_testing = args.only_testing
-        if args.suite:
-            if args.only_testing or args.full_plan:
-                raise CommandError("--suite cannot be used with --only-testing or --full-plan.")
-            only_testing = resolve_suite_selectors(args.suite)
         command = build_test_command(
             repo_root=REPO_ROOT,
             platform=args.platform,
@@ -606,20 +553,10 @@ def main(
             project=args.project,
         )
         if args.print_command:
-            if f"-skip-testing:{EXTERNAL_RUNTIME_TEST_SELECTOR}" in command:
-                print(
-                    "1 external evidence test not run; run it from the Evidence test plan with IMMICHSLIDES_RUNTIME_JSONL_FOR_VALIDATION set.",
-                    file=stdout,
-                )
             print(shlex.join(command), file=stdout)
             return 0
         ensure_disk_for_xcodebuild(data_available_gib, args.min_free_gib)
         print("Running: " + shlex.join(command), file=stdout)
-        if f"-skip-testing:{EXTERNAL_RUNTIME_TEST_SELECTOR}" in command:
-            print(
-                "1 external evidence test not run; run it from the Evidence test plan with IMMICHSLIDES_RUNTIME_JSONL_FOR_VALIDATION set.",
-                file=stdout,
-            )
         stdout.flush()
         exit_code = run(command)
         if exit_code == TIMEOUT_EXIT_CODE:

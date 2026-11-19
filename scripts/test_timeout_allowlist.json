@@ -186,24 +186,6 @@
     "count": 1
   },
   {
-    "path": "immichSlidesTests/SceneTransitionDiagnosticTests.swift",
-    "function": "SceneTransitionDiagnosticTests.phases that run backwards or never settle are rejected",
-    "literal": "letrehold=[crossfade(outgoing:0.67,incoming:0.33,progress:0.2),held(0.2),settledNewPhoto]",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesTests/SettingsResumeContractTests+Timing.swift",
-    "function": "SettingsResumeContractTests.testFirstTransitionStartRejectsEarlyLateBlackAndCrossWindow",
-    "literal": "elapsedUsedForWindow:13.0",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesTests/SettingsResumeContractTests+Timing.swift",
-    "function": "SettingsResumeContractTests.testFirstTransitionStartRejectsEarlyLateBlackAndCrossWindow",
-    "literal": "elapsedUsedForWindow:14.5",
-    "count": 1
-  },
-  {
     "path": "immichSlidesTests/SettingsServerViewModelTests.swift",
     "function": "SettingsServerViewModelTests.<scope>",
     "literal": "letretryDelayNanoseconds:UInt64=1_000_000_000",
@@ -289,12 +271,6 @@
   },
   {
     "path": "immichSlidesTests/SmartFillMotionRuntimeIntegrationTests.swift",
-    "function": "SmartFillMotionRuntimeIntegrationTests.the contract probe records a switch or an opaque cut without a blend and motion that goes backwards.frame",
-    "literal": "fadeDuration:0",
-    "count": 1
-  },
-  {
-    "path": "immichSlidesTests/SmartFillMotionRuntimeIntegrationTests.swift",
     "function": "SmartFillMotionRuntimeIntegrationTests.waitUntilForTesting",
     "literal": "pollInterval:.milliseconds(2)",
     "count": 1
@@ -309,12 +285,6 @@
     "path": "immichSlidesUITests/SmokeFlowTVOSUITests+Support.swift",
     "function": "SmokeFlowTVOSUITests.tvSmokeRunFlow",
     "literal": "letguardWait=TestWait.hangGuard(timeoutSeconds:120)",
-    "count": 1
-  },
-  {
-    "path": "TestSupport/AccessLifecycleContract.swift",
-    "function": "AccessLifecycleContract.assertSystemPauseIdentityTiming",
-    "literal": "letwindow=screenshotOrder[(before+1)..<after]",
     "count": 1
   }
 ]

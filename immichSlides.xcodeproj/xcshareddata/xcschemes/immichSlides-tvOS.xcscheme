@@ -49,9 +49,6 @@
          <TestPlanReference
             reference = "container:immichSlides-Evidence-tvOS.xctestplan">
          </TestPlanReference>
-         <TestPlanReference
-            reference = "container:XcodeCloud-UI-tvOS.xctestplan">
-         </TestPlanReference>
       </TestPlans>
       <Testables>
          <TestableReference

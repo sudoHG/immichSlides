@@ -127,16 +127,6 @@
     },
     {
       "kind": "swift",
-      "key_pattern": "immichSlidesTests/PlaybackRuntimeEvidenceManifestTests/externalRuntimeJSONLPassesValidator()",
-      "dimensions": {
-        "platform": "ios"
-      },
-      "tier": "unit",
-      "environment": "hermetic",
-      "reason": "Test skipped"
-    },
-    {
-      "kind": "swift",
       "key_pattern": "immichSlidesTests/SlideShowViewModelLiveIntegrationTests/`random mode loadAssets finishes loading and returns assets`()",
       "dimensions": {
         "platform": "ios"
@@ -304,16 +294,6 @@
       "tier": "unit",
       "environment": "hermetic",
       "reason": "Test skipped: No local live config; a skip does not mean live membership was verified"
-    },
-    {
-      "kind": "swift",
-      "key_pattern": "immichSlidesTests/PlaybackRuntimeEvidenceManifestTests/externalRuntimeJSONLPassesValidator()",
-      "dimensions": {
-        "platform": "tvos"
-      },
-      "tier": "unit",
-      "environment": "hermetic",
-      "reason": "Test skipped"
     },
     {
       "kind": "swift",

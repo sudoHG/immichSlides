@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from run_offline_unit_tests_test_fixtures import (
-    ACCESS_LIFECYCLE_HOST_SELECTORS,
     CommandError,
     DEFAULT_TIMEOUT_MINUTES,
-    EXTERNAL_RUNTIME_TEST_SELECTOR,
     ElementTree,
     GENERIC_SCHEME,
     IOS_ONE_PASSED_OFFICIAL_SUMMARY,
@@ -45,7 +43,6 @@ from run_offline_unit_tests_test_fixtures import (
     prepare_example_config,
     re,
     read_official_test_results_summary,
-    resolve_suite_selectors,
     scheme_test_plan_names,
     shutil,
     subprocess,
@@ -421,70 +418,8 @@ class ResultGuardCLITestsCases:
         self.assertEqual(reads, [])
 
 
-    def test_suite_cannot_combine_with_only_testing_or_full_plan(self) -> None:
-        stderr = io.StringIO()
-        code = main(
-            [
-                "--platform",
-                "ios",
-                "--destination",
-                "platform=iOS Simulator,id=DEST-IOS",
-                "--suite",
-                "access-lifecycle",
-                "--only-testing",
-                "immichSlidesTests",
-                "--print-command",
-            ],
-            stderr=stderr,
-            run=lambda _: 0,
-            data_available_gib=lambda: 200,
-        )
-        self.assertNotEqual(code, 0)
-        self.assertIn("--suite", stderr.getvalue())
-
-        stderr = io.StringIO()
-        code = main(
-            [
-                "--platform",
-                "ios",
-                "--destination",
-                "platform=iOS Simulator,id=DEST-IOS",
-                "--suite",
-                "access-lifecycle",
-                "--full-plan",
-                "--print-command",
-            ],
-            stderr=stderr,
-            run=lambda _: 0,
-            data_available_gib=lambda: 200,
-        )
-        self.assertNotEqual(code, 0)
-        self.assertIn("--suite", stderr.getvalue())
 
 
-    def test_print_command_access_lifecycle_suite_does_not_call_xcode(self) -> None:
-        calls: list[list[str]] = []
-        stdout = io.StringIO()
-        code = main(
-            [
-                "--platform",
-                "ios",
-                "--destination",
-                "platform=iOS Simulator,id=DEST-IOS",
-                "--suite",
-                "access-lifecycle",
-                "--print-command",
-            ],
-            stdout=stdout,
-            run=lambda argv: calls.append(argv) or 0,
-            data_available_gib=lambda: 200,
-        )
-        output = stdout.getvalue()
-        self.assertEqual(code, 0)
-        self.assertEqual(calls, [])
-        self.assertIn("-only-testing:immichSlidesTests/AccessProtectionStoreTests", output)
-        self.assertIn("-only-testing:immichSlidesTests/PlaybackSettingsViewModelTests", output)
-        self.assertNotIn("UITests", output)
 
 
     def test_print_command_does_not_read_result_bundle(self) -> None:

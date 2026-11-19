@@ -57,8 +57,6 @@ REPO_ROOT = SCRIPT_DIR.parent
 from run_offline_unit_tests import (  # noqa: E402
     CommandError,
     DEFAULT_TIMEOUT_MINUTES,
-    EXTERNAL_RUNTIME_TEST_SELECTOR,
-    ACCESS_LIFECYCLE_HOST_SELECTORS,
     MIN_DATA_GIB,
     TIMEOUT_EXIT_CODE,
     build_test_command,
@@ -72,7 +70,6 @@ from run_offline_unit_tests import (  # noqa: E402
     parse_official_test_results_summary,
     prepare_example_config,
     read_official_test_results_summary,
-    resolve_suite_selectors,
 )
 
 
