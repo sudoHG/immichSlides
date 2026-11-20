@@ -11,7 +11,7 @@ import tempfile
 import time
 import tarfile
 import unittest
-from contextlib import ExitStack, redirect_stderr
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -1549,7 +1549,7 @@ class SmokeShadowTests(unittest.TestCase):
             self.assertFalse(root.exists())
 
     def test_cleanup_failure_names_only_the_closed_step_and_retains_owned_inputs(self):
-        for step in ("runner-cleanup", "ownership", "simctl-shutdown", "simctl-delete", "lsof-timeout", "lsof-holders",
+        for step in ("runner-cleanup", "ownership", "lsof-timeout", "lsof-holders",
                      "lsof-unavailable", "lsof-stderr", "lsof-empty", "lsof-exit", "lsof-exit-output", "remove"):
             with self.subTest(step=step), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
                 temporary = Path(raw)
@@ -1559,13 +1559,10 @@ class SmokeShadowTests(unittest.TestCase):
                     (temporary / "smoke-cleanup-blocked").touch()
                 def run(argv, **options):
                     if argv[:2] == ["xcrun", "simctl"]:
-                        if argv[2] == "shutdown":
-                            self.assertIs(options["stdout"], subprocess.DEVNULL)
-                            self.assertIs(options["stderr"], subprocess.DEVNULL)
-                        else:
-                            self.assertEqual(options, {"check": True, "timeout": 60})
-                        if step == "simctl-" + argv[2]:
-                            raise subprocess.TimeoutExpired(["PRIVATE_SENTINEL"], 60, output="PRIVATE_SENTINEL")
+                        self.assertIs(options["stdout"], subprocess.DEVNULL)
+                        self.assertIs(options["stderr"], subprocess.DEVNULL)
+                        if argv[2] == "delete":
+                            self.assertEqual((options["check"], options["timeout"]), (True, 60))
                     elif step == "lsof-timeout":
                         raise subprocess.TimeoutExpired(["PRIVATE_SENTINEL"], 30, output="PRIVATE_SENTINEL")
                     elif step == "lsof-unavailable":
@@ -1591,6 +1588,32 @@ class SmokeShadowTests(unittest.TestCase):
                 self.assertTrue(root.is_dir())
                 if step != "remove":
                     remove.assert_not_called()
+
+    def test_cleanup_warns_on_stuck_simulator_disposal_and_still_removes_owned_inputs(self):
+        failures = (("simctl-shutdown", subprocess.TimeoutExpired(["PRIVATE_SENTINEL"], 60, output="PRIVATE_SENTINEL")),
+                    ("simctl-delete", subprocess.TimeoutExpired(["PRIVATE_SENTINEL"], 60, output="PRIVATE_SENTINEL")),
+                    ("simctl-delete", subprocess.CalledProcessError(1, ["PRIVATE_SENTINEL"], output="PRIVATE_SENTINEL")))
+        for step, failure in failures:
+            with self.subTest(step=step, failure=type(failure).__name__), tempfile.TemporaryDirectory() as raw:
+                temporary = Path(raw)
+                root = temporary / "smoke-execution.noindex"
+                shadow.write_json(root / "ownership.json", shadow.shadow_context(environment()))
+                calls = []
+                def run(argv, **options):
+                    calls.append(argv[:3])
+                    if argv[:2] == ["xcrun", "simctl"] and step == "simctl-" + argv[2]:
+                        raise failure
+                    return SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+                with patch.object(shadow.subprocess, "run", side_effect=run), \
+                        redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as log:
+                    self.assertEqual(shadow.cleanup(dict(environment(), UI_SIMULATOR="PRIVATE_SENTINEL"), temporary), 0)
+                self.assertEqual(log.getvalue(), f"cleanup-warning: step={step}\n")
+                self.assertEqual(out.getvalue(),
+                                 f"::warning title=Smoke cleanup::simulator disposal did not finish (step={step})\n")
+                self.assertNotIn("PRIVATE_SENTINEL", out.getvalue() + log.getvalue())
+                self.assertEqual(["xcrun", "simctl", "delete"] in calls, step == "simctl-delete")
+                self.assertIn(["lsof", "-Fc", "+D"], calls)
+                self.assertFalse(root.exists())
 
     def test_cleanup_reprobes_only_transient_spotlight_holders_once_before_deleting(self):
         spotlight = SimpleNamespace(returncode=0, stdout=b"cmdworker_shared\n", stderr=b"")

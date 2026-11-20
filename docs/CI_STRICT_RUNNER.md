@@ -100,6 +100,8 @@ including on failure, with bounded xcresulttool calls. Successful export,
 checks, sensitive scanning and cleanup precede disposal. Incomplete or failed
 runs retain private quarantine for diagnosis. Missing exports cannot pass.
 Delete task-owned results/products after reading them and checking path holders.
+A simulator shutdown or delete timeout, or a failed delete, is a warning because the
+hosted runner is discarded after the job; every other cleanup failure fails the group.
 
 Only scanned compact records and allowlisted sanitized first-failure diagnostics
 may upload. `FirstFailureContext` retains normal first-failure capture.
