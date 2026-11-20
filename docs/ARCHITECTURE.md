@@ -427,7 +427,7 @@ Use these words, and the code names in backticks, instead of inventing new ones.
 - **access protection**: optional PIN gate on settings (`AccessProtectionStore`, `AccessProtectionViewModel`, `PinEntrySheetView`). **recovery** is the state where the flag is on but the PIN is missing from the Keychain (`isRecoveryNeeded`).
 - **onboarding session**: the first-boot → mode selection → filter summary sequence (`AppFlowStateMachine.isOnboardingSession`). Only it allows going back to mode selection.
 - **live test**: a test that needs a real Immich server configured in `env.xcconfig`; it skips without one.
-- **smoke flow**: a core user/system boundary run against public loopback fixtures by `scripts/run_strict_e2e.py --suite smoke-flow`; the manifest maps 20 methods to 23 device flows.
+- **smoke flow**: a core user/system boundary run against public loopback fixtures by `scripts/run_strict_e2e.py --suite smoke-flow`; the manifest maps 19 methods to 21 device flows.
 - **evidence**: manually selected screenshot or measurement tooling. Evidence plans retain App Store screenshot classes and the unit target's conditional evidence cases; outputs need human review.
 
 ## 6. Testing and tooling

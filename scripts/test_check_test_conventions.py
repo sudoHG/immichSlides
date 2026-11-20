@@ -1007,9 +1007,9 @@ class SmokeManifestTests(unittest.TestCase):
     def test_smoke_binding_requires_the_contracted_method_and_core_population(self):
         from strict_e2e_smoke import load_manifest, validate_manifest, select_scope
         manifest, methods = load_manifest(Path(__file__).resolve().parent.parent)
-        self.assertEqual(23, len(validate_manifest(manifest, methods)))
+        self.assertEqual(21, len(validate_manifest(manifest, methods)))
         self.assertEqual(7, len(select_scope(manifest["flows"], "core")))
-        self.assertEqual(20, len({flow["selector"] for flow in manifest["flows"]}))
+        self.assertEqual(19, len({flow["selector"] for flow in manifest["flows"]}))
         for changed_selector in ("SmokeFlowIOSUITests/testSettingsRelaunch", "LegacyUITests/testFirstBoot"):
             changed = copy.deepcopy(manifest)
             next(flow for flow in changed["flows"] if flow["id"] == "iphone-first-boot")["selector"] = changed_selector

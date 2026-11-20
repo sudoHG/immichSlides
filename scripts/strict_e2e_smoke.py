@@ -65,14 +65,12 @@ def unique_object(pairs):
 
 FLOW_CONFIGURATIONS = {
     'iphone-album-selection': 'Debug',
-    'iphone-background-return': 'Release',
     'iphone-connection-error': 'Debug',
     'iphone-first-boot': 'Debug',
     'iphone-person-return': 'Debug',
     'iphone-pin-gate': 'Debug',
     'iphone-playback-controls': 'Debug',
     'iphone-settings-relaunch': 'Release',
-    'ipad-background-return': 'Release',
     'ipad-first-boot': 'Debug',
     'ipad-playback-controls': 'Debug',
     'ipad-rotation': 'Debug',

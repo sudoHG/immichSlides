@@ -346,7 +346,7 @@ def check_shared_shadow_contract(document, events, flag):
     except (KeyError, TypeError, IndexError, AttributeError):
         valid = False
     if not valid:
-        flag("workflow", "smoke-shadow-contract", "Shared shadow requires two 27/30-minute producers, immutable configuration downloads, verification, read-only provenance and always aggregation; capacity is 100 minutes / 230 runner minutes")
+        flag("workflow", "smoke-shadow-contract", "Shared shadow requires two 27/30-minute producers, immutable configuration downloads, verification, read-only provenance and always aggregation; capacity is 100 minutes / 200 runner minutes")
     else:
         check_shadow_contract(projected, events, flag)
 
