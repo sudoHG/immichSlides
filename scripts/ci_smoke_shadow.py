@@ -1249,10 +1249,16 @@ def cleanup(environment, temporary):
         udid = environment.get("UI_SIMULATOR")
         if udid:
             step = "simctl-shutdown"
-            subprocess.run(["xcrun", "simctl", "shutdown", udid], check=False, timeout=60,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            step = "simctl-delete"
-            subprocess.run(["xcrun", "simctl", "delete", udid], check=True, timeout=60)
+            try:
+                subprocess.run(["xcrun", "simctl", "shutdown", udid], check=False, timeout=60,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                step = "simctl-delete"
+                subprocess.run(["xcrun", "simctl", "delete", udid], check=True, timeout=60,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except (OSError, subprocess.SubprocessError):
+                # The hosted runner is discarded after the job, so a stuck simulator is reported, not judged.
+                print(f"::warning title=Smoke cleanup::simulator disposal did not finish (step={step})", flush=True)
+                print(f"cleanup-warning: step={step}", file=sys.stderr, flush=True)
         if root.exists():
             step = "lsof-probe"
             try:
