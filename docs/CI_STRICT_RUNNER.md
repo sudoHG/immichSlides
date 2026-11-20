@@ -6,7 +6,7 @@ only smoke. Scheduling belongs to [Smoke nightly](CI_NIGHTLY.md).
 ## Short smoke-flow suite
 
 `--suite smoke-flow` runs the validated [manifest](../scripts/smoke-flows.json)
-against public loopback fixtures: 20 methods, 23 device flows.
+against public loopback fixtures: 19 methods, 21 device flows.
 `--smoke-scope full` is the default; `core` selects the seven scheduled flows.
 Choose a pinned simulator, matching `--smoke-device iphone|ipad|tv` and explicit
 `--configuration Debug|Release`. Only that device/configuration group executes.

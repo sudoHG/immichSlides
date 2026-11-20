@@ -7,7 +7,7 @@ PR CI runs host checks, build and offline units through `ci-gate`, plus the two
 privacy checks. Its `build-for-testing` compiles every scheme testable, including
 the UI target's smoke and App Store screenshot methods, but runs no UI tests.
 The [sole nightly](CI_NIGHTLY.md) compiles/runs smoke: seven core flows when
-main changes, all 23 on manual dispatch before release. Smoke results are
+main changes, all 21 on manual dispatch before release. Smoke results are
 reported and never block merges. There is no CI approval step.
 
 ## 0. When to write a test
@@ -153,7 +153,7 @@ Local raw unit bundles are private and must not be uploaded.
 
 ## Smoke flows
 
-There are ten iOS methods and ten tvOS methods, mapped to 23 device flows.
+There are nine iOS methods and ten tvOS methods, mapped to 21 device flows.
 The authoritative per-device/configuration selectors are
 [`smoke-flows.json`](../scripts/smoke-flows.json), validated against compiled-source
 platform inventory. [Smoke nightly](CI_NIGHTLY.md) owns scope/scheduling;

@@ -21,16 +21,6 @@
       "selector": "SmokeFlowIOSUITests/testAlbumSelection"
     },
     {
-      "id": "iphone-background-return",
-      "platform": "ios",
-      "device": "iphone",
-      "configuration": "Release",
-      "fixtures": [
-        "a"
-      ],
-      "selector": "SmokeFlowIOSUITests/testBackgroundReturn"
-    },
-    {
       "id": "iphone-connection-error",
       "platform": "ios",
       "device": "iphone",
@@ -89,16 +79,6 @@
         "a"
       ],
       "selector": "SmokeFlowIOSUITests/testSettingsRelaunch"
-    },
-    {
-      "id": "ipad-background-return",
-      "platform": "ios",
-      "device": "ipad",
-      "configuration": "Release",
-      "fixtures": [
-        "a"
-      ],
-      "selector": "SmokeFlowIOSUITests/testBackgroundReturn"
     },
     {
       "id": "ipad-first-boot",

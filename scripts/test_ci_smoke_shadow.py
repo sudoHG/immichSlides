@@ -249,7 +249,7 @@ class SmokeShadowTests(unittest.TestCase):
                 context.pop("SMOKE_SCOPE")
                 scheduling = shadow.make_plan(context, flows, "c" * 64)
                 self.assertEqual({flow["id"] for flow in scheduling["flows"]}, expected)
-                self.assertEqual(len(scheduling["flows"]), 7 if scope == "core" else 23)
+                self.assertEqual(len(scheduling["flows"]), 7 if scope == "core" else 21)
                 groups = {group["id"] for group in scheduling["groups"]}
                 self.assertEqual(groups, {flow["device"] + "-" + flow["configuration"].lower()
                                          for flow in scheduling["flows"]})
@@ -1706,7 +1706,7 @@ class SmokeShadowTests(unittest.TestCase):
         smoke_manifest = json.loads((shadow.ROOT / shadow.MANIFEST).read_text())
         scheduling = shadow.make_plan(environment(), smoke_manifest, "c" * 64)
         expected = {"iphone-debug": 27, "iphone-release": 27, "ipad-debug": 27,
-                    "ipad-release": 27, "tv-debug": 22, "tv-release": 22}
+                    "tv-debug": 22, "tv-release": 22}
         self.assertEqual({group["id"] for group in scheduling["groups"]}, set(expected))
         for group_id, minutes in expected.items():
             for setup_seconds in (20 * 60, minutes * 60 + 1):

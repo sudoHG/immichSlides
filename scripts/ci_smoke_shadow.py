@@ -31,7 +31,7 @@ from ci_summary import ContractError, decode, markdown_text, require, sha
 WORKFLOW = ".github/workflows/ci-smoke-shadow.yml"
 MANIFEST = "scripts/smoke-flows.json"
 GROUP_BUDGET_MINUTES = {"iphone-debug": 27, "iphone-release": 27, "ipad-debug": 27,
-                        "ipad-release": 27, "tv-debug": 22, "tv-release": 22}
+                        "tv-debug": 22, "tv-release": 22}
 JOB_RESERVE_MINUTES = 3  # Keep upload and cleanup headroom outside the inner deadline.
 ARCHIVE_MODE = "smoke-archive-v2"
 PRODUCER_BUDGET_MINUTES = 27
@@ -696,7 +696,7 @@ def markdown(record):
                 configuration, timing.get("build_seconds"), timing.get("pack_seconds"), timing.get("upload_seconds"),
                 provenance.get("artifact_id"), provenance.get("manifest_sha256"), provenance.get("archive_sha256"))) + " |")
         lines += ["", f"Shared build runner seconds (counted once): {record['shared_build_runner_seconds'] if record['shared_build_runner_seconds'] is not None else 'unknown'}. ",
-                  "Capacity: 100-minute envelope (5 + 30 + 60 + 5), 230 runner minutes; observed-workload estimate saves about 21–35 runner minutes, NOT_VERIFIED on this graph."]
+                  "Capacity: 100-minute envelope (5 + 30 + 60 + 5), 200 runner minutes; observed-workload estimate saves about 21–35 runner minutes, NOT_VERIFIED on this graph."]
     if record["errors"]:
         lines += ["", "Errors: " + "; ".join(markdown_text(error) for error in record["errors"])]
     return "\n".join(lines) + "\n"

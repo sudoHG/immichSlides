@@ -266,10 +266,6 @@ extension XCUIApplication {
         FirstFailureContext.action("launch") { launch() }
     }
 
-    func activateForFailureEvidence() {
-        FirstFailureContext.action("activate") { activate() }
-    }
-
     func terminateForFailureEvidence() {
         FirstFailureContext.action("terminate") { terminate() }
     }

@@ -106,7 +106,7 @@ Builds produce [secret-free archives](docs/CI_BUILD_ARCHIVE.md), then
 PR CI's `build-for-testing` compiles every scheme testable, including the UI
 target's smoke and App Store screenshot methods, but runs no UI tests.
 The [sole smoke nightly](docs/CI_NIGHTLY.md) compiles and runs smoke when main changes:
-seven core flows on the daily schedule, all 23 on manual dispatch before release.
+seven core flows on the daily schedule, all 21 on manual dispatch before release.
 Smoke results are reported and never block merges.
 
 `scripts/check_all.sh` defaults to two Python shards with static checks once;

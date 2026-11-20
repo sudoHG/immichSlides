@@ -24,7 +24,7 @@ A prior failure also counts as tested; the skip summary links its run, attempt
 and outcome. Missing or unreadable history causes execution. This also prevents
 the backup from repeating an already tested head.
 
-Manual dispatch always executes. Its `scope` input defaults to `full`: all 23
+Manual dispatch always executes. Its `scope` input defaults to `full`: all 21
 flows. Run the full scope before a release; `core` is available for diagnosis.
 
 ```bash
@@ -36,8 +36,8 @@ contributor approval is separate from this main-only workflow.
 
 ## Execution and results
 
-[`smoke-flows.json`](../scripts/smoke-flows.json) maps 20 XCTest methods to 23
-device flows: eight iPhone, five iPad and ten Apple TV. The manifest validator
+[`smoke-flows.json`](../scripts/smoke-flows.json) maps 19 XCTest methods to 21
+device flows: seven iPhone, four iPad and ten Apple TV. The manifest validator
 checks IDs, platforms, configurations, fixtures and selectors, including the
 seven core IDs. No historical planning inventory selects tests.
 
@@ -59,4 +59,4 @@ obligation to preserve retired readers or legacy data.
 
 Build identity, simulator reset, fixtures, timeouts and private results are in
 [the smoke runner guide](CI_STRICT_RUNNER.md). A single local flow or a build-only
-run does not establish a complete seven- or 23-flow result.
+run does not establish a complete seven- or 21-flow result.

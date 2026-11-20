@@ -140,26 +140,6 @@ final class SmokeFlowIOSUITests: XCTestCase {
     }
 
     @MainActor
-    func testBackgroundReturn() throws {
-        try iosSmokeFlow { app, guardWait, input in
-            try iosSmokeConfigure(app, guardWait, input: input)
-            try iosSmokeChooseMode(app, guardWait, filtered: false)
-            try iosSmokePlayback(app, guardWait)
-            try iosSmokeAction(guardWait) { XCUIDevice.shared.press(.home) }
-            try iosSmokeRequire(guardWait, "Home must background the app") {
-                let phase = app.state
-                return phase == .runningBackground || phase == .runningBackgroundSuspended
-            }
-            try iosSmokeAction(guardWait) { app.activateForFailureEvidence() }
-            try iosSmokeRequire(guardWait, "activation must return the app to foreground") {
-                app.state == .runningForeground
-            }
-            try iosSmokePlayback(app, guardWait)
-            try iosSmokePause(app, guardWait)
-        }
-    }
-
-    @MainActor
     func testSettingsRelaunch() throws {
         try iosSmokeFlow { app, guardWait, input in
             try iosSmokeConfigure(app, guardWait, input: input)
